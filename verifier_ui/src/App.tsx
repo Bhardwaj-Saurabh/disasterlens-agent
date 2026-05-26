@@ -1,0 +1,88 @@
+import { useEffect, useState } from "react";
+import { CandidateCard } from "./components/CandidateCard";
+import { Queue } from "./components/Queue";
+import { ReunificationMap } from "./components/ReunificationMap";
+import { fetchPending, fetchShelters, type PendingDecision, type Shelter } from "./lib/api";
+
+const POLL_INTERVAL_MS = 1500;
+
+export default function App() {
+  const [decisions, setDecisions] = useState<PendingDecision[]>([]);
+  const [shelters, setShelters] = useState<Shelter[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load shelters once.
+  useEffect(() => {
+    fetchShelters().then(setShelters).catch((e) => setError(String(e)));
+  }, []);
+
+  // Poll pending decisions.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const next = await fetchPending();
+        if (cancelled) return;
+        setDecisions(next);
+        setError(null);
+        setSelectedId((current) => {
+          if (current && next.some((d) => d.decision_id === current)) return current;
+          return next[0]?.decision_id ?? null;
+        });
+      } catch (e) {
+        if (!cancelled) setError(String(e));
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  const selected = decisions.find((d) => d.decision_id === selectedId) ?? null;
+
+  return (
+    <div className="app">
+      <header className="app-header">
+        <h1>DisasterLens · Verifier</h1>
+        <span className="muted">
+          {decisions.length} pending · polling every {POLL_INTERVAL_MS / 1000}s
+        </span>
+      </header>
+
+      {error && <div className="banner-error">{error}</div>}
+
+      <main className="app-main">
+        <aside className="sidebar">
+          <h2>Queue</h2>
+          <Queue decisions={decisions} selectedId={selectedId} onSelect={setSelectedId} />
+        </aside>
+
+        <section className="center">
+          {selected ? (
+            <CandidateCard
+              decision={selected}
+              shelters={shelters}
+              onDecided={() => setSelectedId(null)}
+            />
+          ) : (
+            <div className="empty-state">
+              <h2>No active decision selected</h2>
+              <p className="muted">
+                When the agent finds a candidate above the confidence threshold,
+                a decision appears here for human approval.
+              </p>
+            </div>
+          )}
+        </section>
+
+        <section className="map-pane">
+          <ReunificationMap shelters={shelters} focused={selected} />
+        </section>
+      </main>
+    </div>
+  );
+}
