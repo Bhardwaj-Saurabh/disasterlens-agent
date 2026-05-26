@@ -1,0 +1,19 @@
+{
+  "mappings": {
+    "properties": {
+      "report_id": { "type": "keyword" },
+      "text": { "type": "text" },
+      "text_embedding": {
+        "type": "dense_vector",
+        "dims": 384,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "language": { "type": "keyword" },
+      "mentioned_names": { "type": "keyword" },
+      "geo_location": { "type": "geo_point" },
+      "source_platform": { "type": "keyword" },
+      "timestamp": { "type": "date" }
+    }
+  }
+}

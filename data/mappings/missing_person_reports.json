@@ -1,0 +1,64 @@
+{
+  "settings": {
+    "analysis": {
+      "filter": {
+        "name_phonetic": {
+          "type": "phonetic",
+          "encoder": "double_metaphone",
+          "replace": false
+        },
+        "name_nicknames": {
+          "type": "synonym_graph",
+          "synonyms_set": "disasterlens_nicknames",
+          "updateable": true
+        }
+      },
+      "analyzer": {
+        "name_standard": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding"]
+        },
+        "name_standard_search": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding", "name_nicknames"]
+        },
+        "name_phonetic": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding", "name_phonetic"]
+        },
+        "name_translit": {
+          "tokenizer": "icu_tokenizer",
+          "filter": ["icu_folding", "icu_normalizer", "lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "report_id": { "type": "keyword" },
+      "subject_name": {
+        "type": "text",
+        "analyzer": "name_standard",
+        "search_analyzer": "name_standard_search",
+        "fields": {
+          "phonetic": { "type": "text", "analyzer": "name_phonetic" },
+          "translit": { "type": "text", "analyzer": "name_translit" },
+          "keyword":  { "type": "keyword" }
+        }
+      },
+      "subject_age": { "type": "integer" },
+      "description": { "type": "text" },
+      "description_embedding": {
+        "type": "dense_vector",
+        "dims": 384,
+        "index": true,
+        "similarity": "cosine"
+      },
+      "language": { "type": "keyword" },
+      "last_known_location": { "type": "geo_point" },
+      "last_known_location_text": { "type": "text" },
+      "reported_at": { "type": "date" },
+      "source": { "type": "keyword" }
+    }
+  }
+}

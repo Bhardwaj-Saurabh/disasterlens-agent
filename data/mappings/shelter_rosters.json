@@ -1,0 +1,60 @@
+{
+  "settings": {
+    "analysis": {
+      "filter": {
+        "name_phonetic": {
+          "type": "phonetic",
+          "encoder": "double_metaphone",
+          "replace": false
+        },
+        "name_nicknames": {
+          "type": "synonym_graph",
+          "synonyms_set": "disasterlens_nicknames",
+          "updateable": true
+        }
+      },
+      "analyzer": {
+        "name_standard": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding"]
+        },
+        "name_standard_search": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding", "name_nicknames"]
+        },
+        "name_phonetic": {
+          "tokenizer": "standard",
+          "filter": ["lowercase", "asciifolding", "name_phonetic"]
+        },
+        "name_translit": {
+          "tokenizer": "icu_tokenizer",
+          "filter": ["icu_folding", "icu_normalizer", "lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "person_id": { "type": "keyword" },
+      "shelter_id": { "type": "keyword" },
+      "name": {
+        "type": "text",
+        "analyzer": "name_standard",
+        "search_analyzer": "name_standard_search",
+        "fields": {
+          "phonetic": { "type": "text", "analyzer": "name_phonetic" },
+          "translit": { "type": "text", "analyzer": "name_translit" },
+          "keyword":  { "type": "keyword" }
+        }
+      },
+      "name_variants": { "type": "keyword" },
+      "age": { "type": "integer" },
+      "language_spoken": { "type": "keyword" },
+      "arrival_time": { "type": "date" },
+      "school_or_employer": { "type": "text" },
+      "distinguishing_features": { "type": "text" },
+      "contact_consent": { "type": "boolean" },
+      "shelter_location": { "type": "geo_point" }
+    }
+  }
+}

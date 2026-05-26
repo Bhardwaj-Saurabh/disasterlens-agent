@@ -1,0 +1,30 @@
+{
+  "mappings": {
+    "properties": {
+      "case_id": { "type": "keyword" },
+      "seeker_name": { "type": "text" },
+      "seeker_language": { "type": "keyword" },
+      "seeker_contact": { "type": "keyword" },
+      "subject_name_as_given": { "type": "text" },
+      "subject_name_variants_explored": { "type": "keyword" },
+      "subject_age_estimate": { "type": "integer" },
+      "last_known_location": { "type": "geo_point" },
+      "distinguishing_features": { "type": "text" },
+      "status": { "type": "keyword" },
+      "candidate_matches": {
+        "type": "nested",
+        "properties": {
+          "person_id": { "type": "keyword" },
+          "source_index": { "type": "keyword" },
+          "confidence": { "type": "float" },
+          "evidence": { "type": "text" },
+          "verifier_decision": { "type": "keyword" },
+          "verified_at": { "type": "date" }
+        }
+      },
+      "standing_query_active": { "type": "boolean" },
+      "created_at": { "type": "date" },
+      "resolved_at": { "type": "date" }
+    }
+  }
+}

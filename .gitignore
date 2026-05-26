@@ -9,6 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
+# Local config — holds Elastic API key, never commit
+.env
+.env.local
+.env.*.local
+
 docs/devpost-submission.md
 docs/outreach.md
 docs/use_case.md
+
+# Generated synthetic data (re-creatable via `uv run python -m data.generate_synthetic`)
+data/synthetic/

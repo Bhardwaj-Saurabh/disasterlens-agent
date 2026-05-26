@@ -1,0 +1,66 @@
+# DisasterLens nickname synonym graph.
+#
+# Source-of-truth for the `disasterlens_nicknames` synonyms set loaded into Elastic
+# Cloud Serverless via the Synonyms API (PUT _synonyms/disasterlens_nicknames).
+# Referenced by every `name_standard` analyzer in data/mappings/*.json.
+#
+# Format: Solr-style equivalence groups. One group per line. Comma-separated tokens
+# are treated as fully equivalent (search for any → matches all). Comments start with #.
+#
+# Each given name belongs to exactly ONE group — Spanish↔English calques are merged
+# into the same group as their nicknames, so {Michael,Mike,Miguel,Miguelito} is one
+# class rather than two overlapping ones.
+#
+# Coverage rationale (PRD §7 stress cases):
+#   • Spanish diminutives + Sp↔En calques  — Carlos/Carlitos/Charles, John/Juan/Johnny
+#   • English nicknames                    — Catherine/Kate/Cathy, William/Bill/Will
+#   • Arabic romanisation                  — Mohammed/Muhammad/Mohamed/Mohd
+#   • Vietnamese romanisation              — handled by name_translit analyzer (ICU),
+#                                            not here; name-order inversion is an
+#                                            application-layer concern
+#
+# Expand judiciously: every nickname group widens recall and erodes precision.
+# When in doubt, add the case to the eval set first and verify the gain.
+
+# ── Spanish & Spanish↔English (merged) ────────────────────────────────────
+carlos, carlitos, carlito, charles, charlie, chuck
+manuel, manny, manolo
+francisco, paco, pancho, frank, francis
+guillermo, guille, memo, william, bill, billy, will, willie
+roberto, beto, robert, bob, bobby, rob, robbie
+ricardo, ricky, rico, richard, dick, rick
+antonio, tony, toño, anthony
+miguel, miguelito, michael, mike, mick, mikey
+jose, joseph, pepe, joe, yusuf, yousef, yousuf
+juan, john, johnny, juanito, ivan
+pedro, peter, pete
+maria, mary, marie, mari, miriam, maryam, miryam
+ana, anna, anita, hannah
+isabella, isabel, isa, bella, elizabeth, liz, beth, betty, eliza, lizzie
+diego, james, jim, jimmy, jamie, jaime, santiago, iago
+ramon, raymond, ray
+
+# ── English-only (no common Spanish form) ─────────────────────────────────
+catherine, katherine, kathryn, kate, katie, cathy, kathy
+margaret, maggie, meg, peggy, marge
+thomas, tom, tommy, tomas
+edward, ed, eddie, ted, ned, eduardo
+nicholas, nick, nicky, nicolas
+benjamin, ben, benny
+samuel, sam, sammy
+joshua, josh
+daniel, dan, danny
+matthew, matt, matty, mateo
+
+# ── Arabic romanisation ───────────────────────────────────────────────────
+mohammed, muhammad, mohamed, mohammad, mohd, mehmet, mohamad
+ahmed, ahmad, ahmet
+hassan, hasan, hussan
+hussein, husain, hussain, hossein, hussien
+ali, aly
+omar, umar
+ibrahim, ebrahim, abraham, ibraheem
+khaled, khalid
+fatima, fatma, fatimah, fatema
+aisha, aysha, ayesha
+zainab, zaynab, zeinab, zeynab
