@@ -183,6 +183,29 @@ code {
   font-size: 13px;
   color: var(--text-card-dim);
 }
+.evidence-photo {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: #eff6ff;
+  border-left: 3px solid #3b82f6;
+  border-radius: 4px;
+  color: var(--text-card);
+}
+.evidence-photo-label {
+  font-weight: 700;
+  color: #1d4ed8;
+  letter-spacing: 0.3px;
+}
+.photo-thumb {
+  width: 96px;
+  height: 96px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border-card);
+  background: #f1f5f9;
+  object-fit: cover;
+}
 .muted { color: var(--text-card-dim); margin: 0; font-size: 13px; }
 .muted-faint { color: #94a3b8; font-size: 12px; }
 /* dark-mode-only context for muted (in the header / sidebar) */
@@ -263,6 +286,60 @@ code {
   border-radius: 4px;
 }
 .badge-small { font-size: 9px; padding: 2px 6px; }
+
+/* Policy badges — minor / consent-withheld. Visually distinct from the
+   language chip so a verifier scanning the queue notices them immediately. */
+.card-header-badges {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.badge-minor {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #f59e0b;
+  letter-spacing: 0.5px;
+}
+.badge-no-consent {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid var(--reject);
+  letter-spacing: 0.5px;
+}
+
+/* ─── Policy panel (consent / minor gates) ───────────────────────────── */
+.policy-panel {
+  margin-top: 18px;
+  padding: 14px 16px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  color: var(--text-card);
+  font-size: 13px;
+}
+.policy-blocker {
+  margin: 0;
+  color: #991b1b;
+}
+.policy-blocker strong { display: block; margin-bottom: 4px; }
+.policy-check {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  cursor: pointer;
+  line-height: 1.45;
+}
+.policy-check input[type="checkbox"] {
+  margin-top: 3px;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--approve);
+  cursor: pointer;
+}
+.policy-check strong { display: block; }
+.policy-check em { color: var(--text-card-dim); font-style: italic; }
 
 /* ─── Empty state ────────────────────────────────────────────────────── */
 .empty-state {

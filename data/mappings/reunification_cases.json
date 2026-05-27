@@ -23,6 +23,16 @@
         }
       },
       "standing_query_active": { "type": "boolean" },
+      "additional_seekers": {
+        "type": "nested",
+        "properties": {
+          "seeker_name": { "type": "text" },
+          "seeker_language": { "type": "keyword" },
+          "seeker_contact": { "type": "keyword" },
+          "relationship": { "type": "keyword" },
+          "attached_at": { "type": "date" }
+        }
+      },
       "created_at": { "type": "date" },
       "resolved_at": { "type": "date" }
     }

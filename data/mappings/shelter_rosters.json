@@ -53,7 +53,9 @@
       "arrival_time": { "type": "date" },
       "school_or_employer": { "type": "text" },
       "distinguishing_features": { "type": "text" },
-      "contact_consent": { "type": "boolean" },
+      "disclosure_consent": { "type": "boolean" },
+      "is_minor": { "type": "boolean" },
+      "intake_photo_url": { "type": "keyword", "index": false },
       "shelter_location": { "type": "geo_point" }
     }
   }

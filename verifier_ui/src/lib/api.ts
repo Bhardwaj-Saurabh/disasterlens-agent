@@ -7,12 +7,22 @@ export interface PendingDecision {
   candidate_name: string;
   candidate_shelter: string;
   candidate_person_id: string;
+  candidate_age?: number | null;
+  candidate_photo_url?: string | null;
+  seeker_photo_url?: string | null;
+  photo_match_summary?: string | null;
   confidence: number;
   evidence: string;
   seeker_query: string;
   seeker_language: string;
   seeker_location_text?: string;
   seeker_location?: { lat: number; lon: number } | null;
+  // Policy gates surfaced from the roster doc by the agent.
+  // `disclosure_consent === false` means dispatch is blocked at the server.
+  // `is_minor === true` forces a guardian_verified checkbox before approval.
+  disclosure_consent?: boolean | null;
+  is_minor?: boolean | null;
+  guardian_verified?: boolean | null;
   created_at: string;
   decision: string | null;
   verifier_id: string | null;
@@ -44,12 +54,15 @@ export async function fetchShelters(): Promise<Shelter[]> {
 export async function postDecision(
   decisionId: string,
   decision: DecisionVerdict,
-  verifierNote = ""
+  verifierNote = "",
+  guardianVerified: boolean | null = null,
 ): Promise<void> {
+  const body: Record<string, unknown> = { decision, verifier_note: verifierNote };
+  if (guardianVerified !== null) body.guardian_verified = guardianVerified;
   const r = await fetch(`/api/decisions/${decisionId}/decide`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ decision, verifier_note: verifierNote }),
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`decide: ${r.status} ${await r.text()}`);
 }

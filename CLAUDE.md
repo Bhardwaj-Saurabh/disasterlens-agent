@@ -60,9 +60,28 @@ cd verifier_ui && npm install && npm run dev                 # Vite at :5173 (pr
 cd verifier_ui && npm run build                              # static build into verifier_ui/dist/
 
 # ── Eval scoreboard (PRD §16 gate: fused precision ≥ 0.90) ─────────────
-uv run python -m evals.score                    # recall@5 + fused precision/recall/F1
+uv run python -m evals.score                    # recall@5 + fused precision/recall/F1 + calibration + bias-by-script
 uv run python -m evals.score --csv              # also write evals/score_results.csv
 uv run python -m evals.score --show-failures    # list every FP/FN by case_id
+uv run python -m evals.explain_match --hero     # render the analyzer-stack breakdown on محمد خان
+
+# ── Seeker chat UI (multilingual, RTL, photo upload) ──────────────────
+cd seeker_ui && npm install && npm run dev      # Vite at :5174 → proxies to :8787
+
+# ── Voice gateway (Twilio webhook target) ──────────────────────────────
+uv run uvicorn voice_gateway.server:app --reload --port 5001
+ngrok http 5001                                  # set <ngrok>/voice/incoming as Twilio Voice webhook
+
+# ── Live incident-mode (the third-minute demo beat) ────────────────────
+uv run python -m scripts.incident_stream --period-sec 8 --max-docs 12
+uv run python -m scripts.incident_stream --reset            # clear watermark for replay
+
+# ── PFIF export (federation to NCMEC UMR / ICRC RFL / other registries) ─
+uv run python -m agent.tools.pfif_export rc_0007 -o /tmp/case.pfif.xml
+
+# ── One-command Cloud Run deploy ───────────────────────────────────────
+GCP_PROJECT_ID=<proj> ./scripts/deploy.sh all   # builds + deploys both services + the job
+GCP_PROJECT_ID=<proj> ./scripts/deploy.sh check # cold-start probe against /healthz
 ```
 
 ## Code Architecture
@@ -79,12 +98,15 @@ The code now implements the full agent composition (per `docs/design.md` §4) pl
 - [agent/verifier_cli.py](agent/verifier_cli.py) — terminal stand-in for the React UI; same Firestore contract.
 
 **Tools — `agent/tools/`**
-The Coordinator's four tool clusters:
+The Coordinator's tool clusters:
 - [agent/tools/elastic.py](agent/tools/elastic.py) — `MCPToolset` over **Streamable HTTP** (not SSE) to `${KIBANA_ENDPOINT}/api/agent_builder/mcp`. Discovers ~21 platform tools at runtime; prompts steer the agent toward `platform_core_search` and `platform_core_execute_esql`.
 - [agent/tools/name_variants.py](agent/tools/name_variants.py) — deterministic FunctionTool wrapping `data.variants.expand` (ICU translit + double-metaphone + nickname graph). Called BEFORE searching any non-Roman-script or diacritic-bearing name.
 - [agent/tools/geocode.py](agent/tools/geocode.py) — lookup-table geocoder for the 10 Houston shelters + landmarks. **Intentionally not Google Maps Geocoding** — the demo must reproduce frame-for-frame.
-- [agent/tools/verifier.py](agent/tools/verifier.py) — `await_verifier` **long-running** FunctionTool. Writes `pending_decisions/{decision_id}` to Firestore, polls until `decision` is set, returns it. Every match destined for an externally-visible action flows through here. Do not reimplement as a polling loop in the prompt — the long-running-tool pattern is the canonical HITL gate.
-- [agent/tools/notify.py](agent/tools/notify.py) — `dispatch_notification`, owned by Notifier. Revalidates the `decision_id` against Firestore before sending.
+- [agent/tools/dedup.py](agent/tools/dedup.py) — `check_existing_case` + `attach_seeker`. The Coordinator calls these BEFORE `await_verifier` so two seekers asking about the same person attach to one case rather than racing in parallel.
+- [agent/tools/photo_match.py](agent/tools/photo_match.py) — Gemini Vision second-opinion. **Photo evidence is capped at ±0.15 on the fused confidence**; when either side is an avatar/illustration the tool returns `comparable: false` and the agent reverts to text-only matching. Honest about avatar-vs-real-photo limitations in synthetic data.
+- [agent/tools/verifier.py](agent/tools/verifier.py) — `await_verifier` **long-running** FunctionTool. Writes `pending_decisions/{decision_id}` to Firestore (with **policy gate fields**: `disclosure_consent`, `is_minor`, `guardian_verified`, plus `candidate_photo_url`, `seeker_photo_url`, `photo_match_summary`), polls until `decision` is set, returns it. Every match destined for an externally-visible action flows through here. Do not reimplement as a polling loop in the prompt — the long-running-tool pattern is the canonical HITL gate.
+- [agent/tools/notify.py](agent/tools/notify.py) — `dispatch_notification`, owned by Notifier. Revalidates the `decision_id` against Firestore + re-checks `disclosure_consent=true` and `(is_minor → guardian_verified=true)` before sending. When `TWILIO_*` env vars are set, sends a real SMS via Twilio's REST API; otherwise falls back to the mock-banner + Firestore-record path.
+- [agent/tools/pfif_export.py](agent/tools/pfif_export.py) — emits **PFIF 1.4 XML** for a verified case (Google Person Finder's federation format). Coarsens location for minors. Refuses non-federatable statuses and consent-withheld cases. CLI: `uv run python -m agent.tools.pfif_export rc_0007`.
 
 **Data layer — `data/`**
 - [data/personas.py](data/personas.py) — hand-curated `STRESS_PERSONAS` (every PRD §7 stress-case row) + `FILLER_PERSONAS` + 10 real Houston-area `SHELTERS` with lat/lon.
@@ -100,14 +122,24 @@ The Coordinator's four tool clusters:
 - [scripts/setup_inference.py](scripts/setup_inference.py) — creates `disasterlens_e5` (`.multilingual-e5-small`, 384-d). Idempotent.
 
 **Eval — `evals/`**
-- [evals/score.py](evals/score.py) — the headline number. Runs the same multi-strategy `dis_max` query the agent uses, computes recall@K, MRR, per-rule recall (with `HERO_RULES` highlighted), hard-negative precision, AND the fused-confidence layer (`top1_score × token-overlap × age`) that produces **PRD §16's "precision ≥ 0.90 at confidence ≥ 0.80"** headline. Threshold lives at `FUSED_CONFIDENCE_THRESHOLD = 0.75` — matches `agent.config.LOW_CONFIDENCE_FLOOR`. Keep them in sync.
+- [evals/score.py](evals/score.py) — the headline number. Runs the same multi-strategy `dis_max` query the agent uses, computes recall@K, MRR, per-rule recall (with `HERO_RULES` highlighted), hard-negative precision, the fused-confidence layer (`top1_score × token-overlap × age`) that produces **PRD §16's "precision ≥ 0.90 at confidence ≥ 0.80"** headline, **a 10-bucket reliability diagram + ECE + Brier score**, and **a bias-by-script audit** (`script_recall_gap`). Threshold lives at `FUSED_CONFIDENCE_THRESHOLD = 0.75` — matches `agent.config.LOW_CONFIDENCE_FLOOR`. Keep them in sync.
+- [evals/explain_match.py](evals/explain_match.py) — CLI that runs the agent's `dis_max` query with `explain=true`, walks the explanation tree, and renders per-analyzer BM25 contributions as ASCII bars. Use for the "analyzer stack firing" beat in the demo video.
 - [evals/family_pairs.jsonl](evals/family_pairs.jsonl) — 50-case gold set, generated by `data/generate_synthetic.py`. **The number that must appear on screen in the demo video** comes from running `evals.score` against this file.
 
 **Verifier UI — `verifier_ui/`**
-- [verifier_ui/server.py](verifier_ui/server.py) — FastAPI proxy. Exposes Firestore `pending_decisions` as REST (`/api/pending`, `/api/decisions/{id}/decide`, `/api/shelters`) and serves the built React app from `dist/`. **Polls, doesn't `onSnapshot`** — deliberate, so no Firebase Web App provisioning is needed (the API uses the agent's ADC).
-- `verifier_ui/src/` — React. Hero component is [ReunificationMap.tsx](verifier_ui/src/components/ReunificationMap.tsx) (MapLibre, animated arc from seeker pin to candidate shelter).
+- [verifier_ui/server.py](verifier_ui/server.py) — FastAPI proxy. Exposes Firestore `pending_decisions` as REST (`/api/pending`, `/api/decisions/{id}/decide`, `/api/shelters`), seeker photo upload (`POST /api/seeker-photos`, `GET /api/seeker-photos/{id}`), **the `/api/seeker-chat` endpoint that drives the agent for the seeker chat UI**, a `/healthz` probe, and serves the built React app from `dist/`. The decide endpoint enforces the minor-protection gate server-side (HTTP 422 if a minor approval lacks `guardian_verified=true`). **Polls, doesn't `onSnapshot`** — deliberate, so no Firebase Web App provisioning is needed.
+- `verifier_ui/src/` — React. Hero component is [ReunificationMap.tsx](verifier_ui/src/components/ReunificationMap.tsx) (MapLibre, animated arc from seeker pin to candidate shelter). [CandidateCard.tsx](verifier_ui/src/components/CandidateCard.tsx) renders the consent / minor policy badges, the guardian-verification checkbox (required to approve under-18 matches), and seeker + candidate photo thumbnails when present.
 
-**Three deployables total** (per `docs/design.md` §11): `disasterlens-agent` (Agent Runtime), `verifier-ui` (Cloud Run service), `standing-query-watcher` (Cloud Run Job). No more.
+**Seeker UI — `seeker_ui/`** (multilingual chat front door)
+- React + Vite app on port `:5174` proxying `/api/*` to `:8787`. Six locales (en/es/ar/vi/zh/fr) with native-language UI strings in [src/i18n.ts](seeker_ui/src/i18n.ts), auto-RTL based on first character, photo upload, and a "agent searching..." spinner that tolerates the 60-90s end-to-end latency. Talks to the backend via `/api/seeker-chat` (which calls `run_query_collect` in the agent) and `/api/seeker-photos`.
+
+**Voice gateway — `voice_gateway/`** (Twilio phone entry point)
+- [voice_gateway/server.py](voice_gateway/server.py) — separate FastAPI app on `:5001`. Webhook chain: `/voice/incoming` (DTMF language pick) → `/voice/lang` (locks `CALL_LOCALE[sid]`) → `/voice/speech` (Twilio Gather speech result, kicks off agent in background task) → `/voice/poll` (long-pollable redirect chain that fits inside Twilio's 15s webhook timeout while the agent run takes its full minute). Also exposes `send_sms` for `agent/tools/notify.py` to use as the real-telco dispatch path. In-memory state (`PENDING_RUNS`, `CALL_LOCALE`) is restart-fragile but fine for hackathon scope.
+
+**Live incident-mode — `scripts/incident_stream.py`**
+- Drips new shelter-roster docs into Elastic at a configurable cadence. Hero personas (Carlos, Mohammed, Nguyen) go in first as **non-canonical variants** (`fold_diacritics`, `arabic_romanise`, `name_order_swap`) so the agent's fuzzy stack has to actually work on the live insertions. Watermarked via `scripts/.incident_stream_watermark.json` so re-runs don't double-write. Designed to run as a Cloud Run Job too (`INCIDENT_STREAM_MODE=cloudrun`).
+
+**Cloud Run deployables** ([scripts/deploy.sh](scripts/deploy.sh)): one Cloud Run service for the combined verifier+seeker FastAPI + UI ([Dockerfile.verifier_ui](Dockerfile.verifier_ui), `--min-instances=1`), one for the Twilio voice gateway ([Dockerfile.voice_gateway](Dockerfile.voice_gateway), `--min-instances=1`), and the incident-stream as a Cloud Run Job. The deploy script ends with a 5-curl cold-start probe against `/healthz` so you can sanity-check judging-week latency.
 
 ## Track-Specific Technical Constraints (Elastic / DisasterLens)
 

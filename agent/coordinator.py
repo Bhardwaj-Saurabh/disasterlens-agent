@@ -21,9 +21,12 @@ from agent.config import GEMINI_MODEL
 from agent.intake import build_intake_agent
 from agent.notifier import build_notifier_agent
 from agent.prompts import COORDINATOR_PROMPT
+from agent.tools.dedup import attach_seeker, check_existing_case
 from agent.tools.elastic import build_elastic_mcp_toolset
 from agent.tools.geocode import geocode_location
 from agent.tools.name_variants import name_variants
+from agent.tools.pfif_export import pfif_export_case
+from agent.tools.photo_match import photo_match
 from agent.tools.verifier import await_verifier
 
 
@@ -49,6 +52,10 @@ def build_coordinator_agent() -> LlmAgent:
             build_elastic_mcp_toolset(),
             name_variants,
             geocode_location,
+            check_existing_case,
+            attach_seeker,
+            photo_match,
             await_verifier,
+            pfif_export_case,
         ],
     )

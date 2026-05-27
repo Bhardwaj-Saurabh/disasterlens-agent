@@ -53,6 +53,29 @@ HERO_RULES = {"nickname", "arabic_romanise", "fold_diacritics",
 # If fused(top1) ≥ this, the agent would surface a candidate; below, it would not.
 FUSED_CONFIDENCE_THRESHOLD = 0.75
 
+# Calibration bucketing — 10 equally-sized bins over [0, 1] gives the standard
+# reliability-diagram resolution while still having ≥3 cases per bucket at
+# n=50.
+_CALIBRATION_BUCKETS = 10
+
+# Bias audit — group personas by script category. A native-Latin-script
+# seeker query and a transliterated Arabic-script query are doing different
+# work, even when both seek the same persona. The audit reports recall by
+# script so a judge can see whether the model favors one over the others.
+_SCRIPT_CATEGORIES = {
+    "latin": ("en", "es", "fr"),
+    "arabic": ("ar",),
+    "vietnamese": ("vi",),
+    "cjk": ("zh", "ja", "ko"),
+}
+
+
+def _script_of(language: str) -> str:
+    for script, langs in _SCRIPT_CATEGORIES.items():
+        if language in langs:
+            return script
+    return "other"
+
 
 def _tokens(name: str) -> set[str]:
     """Tokenise a name: lowercase + asciifold + strip trailing punctuation."""
@@ -288,6 +311,74 @@ def aggregate(results: list[dict]) -> dict:
         1 for r in hard_negs if r["fused_outcome"] == "FP"
     )) if hard_negs else None)
 
+    # ── Calibration: bucket fused_confidence vs actual outcome (TP/TN = correct)
+    # to compute a reliability diagram, Brier score, and Expected Calibration
+    # Error (ECE). The goal: when the model says 0.85, is it right 85% of the
+    # time? A precision number alone hides whether the confidence is meaningful.
+    buckets: list[dict] = []
+    bucket_width = 1.0 / _CALIBRATION_BUCKETS
+    for i in range(_CALIBRATION_BUCKETS):
+        lo, hi = i * bucket_width, (i + 1) * bucket_width
+        bucket_results = [
+            r for r in results
+            if (lo <= r["fused_confidence"] < hi) or (i == _CALIBRATION_BUCKETS - 1 and r["fused_confidence"] == 1.0)
+        ]
+        if not bucket_results:
+            continue
+        correct = [r for r in bucket_results if r["fused_outcome"] in {"TP", "TN"}]
+        accuracy = len(correct) / len(bucket_results)
+        mean_conf = statistics.mean(r["fused_confidence"] for r in bucket_results)
+        buckets.append({
+            "range": (round(lo, 2), round(hi, 2)),
+            "n": len(bucket_results),
+            "mean_confidence": round(mean_conf, 3),
+            "accuracy": round(accuracy, 3),
+            "gap": round(mean_conf - accuracy, 3),  # +ve = over-confident
+        })
+
+    n_all = sum(b["n"] for b in buckets) or 1
+    ece = sum(b["n"] * abs(b["mean_confidence"] - b["accuracy"]) for b in buckets) / n_all
+    # Brier score: mean((conf - outcome)^2). Outcome=1 if correct, 0 otherwise.
+    brier_terms = []
+    for r in results:
+        actual = 1.0 if r["fused_outcome"] in {"TP", "TN"} else 0.0
+        brier_terms.append((r["fused_confidence"] - actual) ** 2)
+    brier = statistics.mean(brier_terms) if brier_terms else 0.0
+
+    # ── Bias audit: recall + fused outcome distribution sliced by script.
+    by_script: dict[str, dict] = {}
+    for script in list(_SCRIPT_CATEGORIES) + ["other"]:
+        slice_results = [r for r in results if _script_of(r["language"]) == script]
+        slice_positive = [r for r in slice_results if not r["is_hard_negative"]]
+        if not slice_positive:
+            continue
+        s_recalls = [r["recall_at_k"] for r in slice_positive if r["recall_at_k"] is not None]
+        s_counts = {"TP": 0, "FP": 0, "FN": 0, "TN": 0}
+        for r in slice_results:
+            s_counts[r["fused_outcome"]] += 1
+        s_fired_correct = s_counts["TP"]
+        s_fired_total = s_counts["TP"] + s_counts["FP"]
+        s_precision = s_fired_correct / s_fired_total if s_fired_total else None
+        s_should_fire = s_counts["TP"] + s_counts["FN"]
+        s_recall_fused = s_counts["TP"] / s_should_fire if s_should_fire else None
+        by_script[script] = {
+            "n": len(slice_results),
+            "n_positive": len(slice_positive),
+            "mean_recall_at_k": round(statistics.mean(s_recalls), 3) if s_recalls else None,
+            "fused_precision": round(s_precision, 3) if s_precision is not None else None,
+            "fused_recall": round(s_recall_fused, 3) if s_recall_fused is not None else None,
+        }
+
+    # Recall gap: max - min across scripts that had ≥3 positive cases. The
+    # threshold is conservative — anything smaller is noise at n=50.
+    qualifying = [s for s in by_script.values() if s["n_positive"] >= 3
+                  and s["mean_recall_at_k"] is not None]
+    if len(qualifying) >= 2:
+        recall_vals = [s["mean_recall_at_k"] for s in qualifying]
+        script_recall_gap = round(max(recall_vals) - min(recall_vals), 3)
+    else:
+        script_recall_gap = None
+
     return {
         "n_positive_cases": len(positive),
         "n_hard_negative_cases": len(hard_negs),
@@ -308,6 +399,13 @@ def aggregate(results: list[dict]) -> dict:
         "fused_recall": fused_recall,
         "fused_f1": fused_f1,
         "fused_hard_neg_rejection": fused_hard_neg_rejection,
+        # Calibration
+        "calibration_buckets": buckets,
+        "ece": round(ece, 4),
+        "brier": round(brier, 4),
+        # Bias audit
+        "by_script": by_script,
+        "script_recall_gap": script_recall_gap,
     }
 
 
@@ -351,6 +449,45 @@ def print_report(agg: dict, top_k: int, hard_neg_threshold: float) -> None:
     for rule, m in agg["per_rule"].items():
         bar = "█" * int(m["recall>0"] * 20)
         print(f"    {rule:18}  {m['recall>0']:.3f}  n={m['n']:3d}  {bar}")
+    print()
+
+    # ─── Calibration ─────────────────────────────────────────────────────
+    print(f"  ─── calibration (does {FUSED_CONFIDENCE_THRESHOLD}+ confidence mean what it claims?) ───")
+    print(f"  Brier score:              {agg['brier']:.4f}  (lower is better; 0 = perfect)")
+    print(f"  Expected Calibration Error (ECE): {agg['ece']:.4f}")
+    if agg["calibration_buckets"]:
+        print(f"  Reliability diagram ({_CALIBRATION_BUCKETS} bins):")
+        print(f"    {'confidence range':16}  {'n':>4}  {'mean conf':>10}  "
+              f"{'accuracy':>9}  {'gap':>6}")
+        for b in agg["calibration_buckets"]:
+            lo, hi = b["range"]
+            gap = b["gap"]
+            arrow = "↑" if gap > 0.05 else ("↓" if gap < -0.05 else " ")
+            print(f"    [{lo:.2f}, {hi:.2f})    {b['n']:>4}  "
+                  f"{b['mean_confidence']:>10.3f}  {b['accuracy']:>9.3f}  "
+                  f"{gap:>+6.3f} {arrow}")
+        print(f"    ↑ = over-confident in this bucket   ↓ = under-confident")
+    print()
+
+    # ─── Bias audit ──────────────────────────────────────────────────────
+    print(f"  ─── bias audit (recall sliced by script category) ──────────")
+    if agg["by_script"]:
+        print(f"    {'script':14}  {'n':>3}  {'positive':>8}  {'recall@k':>9}  "
+              f"{'fused P':>8}  {'fused R':>8}")
+        for script, m in sorted(agg["by_script"].items()):
+            r = "n/a" if m["mean_recall_at_k"] is None else f"{m['mean_recall_at_k']:.3f}"
+            p = "n/a" if m["fused_precision"] is None else f"{m['fused_precision']:.3f}"
+            fr = "n/a" if m["fused_recall"] is None else f"{m['fused_recall']:.3f}"
+            print(f"    {script:14}  {m['n']:>3}  {m['n_positive']:>8}  "
+                  f"{r:>9}  {p:>8}  {fr:>8}")
+        if agg["script_recall_gap"] is not None:
+            gap = agg["script_recall_gap"]
+            verdict = ("✓ small" if gap < 0.10
+                       else "⚠ notable" if gap < 0.20
+                       else "✗ large")
+            print(f"  Recall gap across scripts (max - min): {gap:.3f}  {verdict}")
+        else:
+            print("  Recall gap: not enough cases per script (need ≥3 positives in ≥2 scripts)")
     print()
 
 

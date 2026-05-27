@@ -62,19 +62,51 @@ def dispatch_notification(
         return {"dispatched": False,
                 "error": f"decision={data.get('decision')!r} — only 'approved' may dispatch"}
 
+    # Policy gates — both are runtime backstops for prompt-level rules. Even if
+    # the verifier UI is bypassed or the verifier ticks "approve" out of habit,
+    # these refusals fire from server-side state.
+    if data.get("disclosure_consent") is False:
+        return {"dispatched": False,
+                "error": "disclosure_consent=false — candidate did not authorise "
+                         "being findable through reunification queries"}
+    if data.get("is_minor") and data.get("guardian_verified") is not True:
+        return {"dispatched": False,
+                "error": "is_minor=true and guardian_verified is not True — "
+                         "minor disclosures require guardian verification "
+                         "(see FEMA/NCMEC Post-Disaster Reunification of Children, 2013)"}
+
+    # Real telco dispatch: when the Twilio env vars are configured AND the
+    # recipient is a phone number (E.164, starts with +), we send a real SMS.
+    # Otherwise we fall back to a Firestore-only record plus stdout banner —
+    # the mock path that works without telco creds.
+    sms_result: dict = {"ok": False, "error": "twilio not attempted"}
+    sent_via_twilio = False
+    if recipient and recipient.startswith("+"):
+        try:
+            from voice_gateway.server import send_sms
+            sms_result = send_sms(to=recipient, body=body)
+            sent_via_twilio = sms_result.get("ok", False)
+        except Exception as e:
+            sms_result = {"ok": False, "error": f"voice_gateway import failed: {e}"}
+
     record = {
         "decision_id": decision_id,
         "recipient": recipient,
         "language": language,
         "body": body,
         "dispatched_at": datetime.now(timezone.utc),
+        "transport": "twilio_sms" if sent_via_twilio else "mock",
+        "twilio_sid": sms_result.get("sid"),
     }
     _client().collection(DISPATCHED_COLLECTION).document(decision_id).set(record)
 
     # Demo-visible banner — the agent's reply alone is too quiet for the video.
+    transport_label = "📲 SMS via Twilio" if sent_via_twilio else "📨 MOCK"
     print("┌─────────────────────────────────────────────────────────────────────────")
-    print(f"│ 📨 DISPATCHED  decision={decision_id}  lang={language}  to={recipient}")
+    print(f"│ {transport_label}  decision={decision_id}  lang={language}  to={recipient}")
     print(f"│ {body}")
+    if not sent_via_twilio and sms_result.get("error"):
+        print(f"│ (twilio path skipped: {sms_result['error']})")
     print("└─────────────────────────────────────────────────────────────────────────")
 
     return {
@@ -82,5 +114,7 @@ def dispatch_notification(
         "decision_id": decision_id,
         "language": language,
         "recipient": recipient,
+        "transport": "twilio_sms" if sent_via_twilio else "mock",
+        "twilio_sid": sms_result.get("sid"),
         "preview": body[:80] + ("…" if len(body) > 80 else ""),
     }

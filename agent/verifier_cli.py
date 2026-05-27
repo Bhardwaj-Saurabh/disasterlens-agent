@@ -38,21 +38,37 @@ def _print_doc(doc_id: str, data: dict) -> None:
     print(f"│ DECISION REQUEST  {doc_id}")
     print(f"│ confidence:  {data.get('confidence'):.3f}")
     print(f"│ seeker:      {data.get('seeker_query')!r}  ({data.get('seeker_language')})")
-    print(f"│ candidate:   {data.get('candidate_name')!r}")
+    print(f"│ candidate:   {data.get('candidate_name')!r}"
+          f"  (age={data.get('candidate_age')})")
     print(f"│   in shelter {data.get('candidate_shelter')}  (person_id={data.get('candidate_person_id')})")
     print(f"│ evidence:    {data.get('evidence')}")
+    # Policy gates — surface inline so the verifier can't miss them.
+    if data.get("is_minor"):
+        print("│ ⚠  POLICY:  candidate is a MINOR — guardian verification required to approve")
+    if data.get("disclosure_consent") is False:
+        print("│ ⚠  POLICY:  disclosure_consent=False — approval will not dispatch")
     print("└─────────────────────────────────────────────────────────────────────────")
 
 
-def _record_decision(doc_ref, decision: str, note: str = "") -> None:
-    doc_ref.update({
+def _record_decision(
+    doc_ref,
+    decision: str,
+    note: str = "",
+    guardian_verified: bool | None = None,
+) -> None:
+    update: dict = {
         "decision": decision,
         "verifier_id": VERIFIER_ID,
         "verifier_note": note,
         "decided_at": datetime.now(timezone.utc),
         "status": "decided",
-    })
-    print(f"  → wrote decision={decision!r}\n")
+    }
+    if guardian_verified is not None:
+        update["guardian_verified"] = guardian_verified
+    doc_ref.update(update)
+    print(f"  → wrote decision={decision!r}"
+          + (f" guardian_verified={guardian_verified}" if guardian_verified is not None else "")
+          + "\n")
 
 
 def list_pending(client: firestore.Client) -> list[firestore.DocumentSnapshot]:
@@ -67,11 +83,25 @@ def process_interactive(snaps: list[firestore.DocumentSnapshot]) -> None:
     for snap in snaps:
         data = snap.to_dict() or {}
         _print_doc(snap.id, data)
+        is_minor = bool(data.get("is_minor"))
+        consent_withheld = data.get("disclosure_consent") is False
         while True:
             choice = input("  approve / reject / skip / quit  [a/r/s/q]: ").strip().lower()
             if choice in {"a", "approve"}:
+                if consent_withheld:
+                    print("  ✗ disclosure_consent=False — dispatch will refuse; "
+                          "reject or skip instead")
+                    continue
+                guardian = None
+                if is_minor:
+                    confirm = input("  Guardian relationship confirmed (school record / "
+                                    "photo ID / cross-roster)? [y/N]: ").strip().lower()
+                    guardian = confirm in {"y", "yes"}
+                    if not guardian:
+                        print("  ✗ minor approval requires guardian confirmation — skipping")
+                        continue
                 note = input("  note (optional): ").strip()
-                _record_decision(snap.reference, "approved", note)
+                _record_decision(snap.reference, "approved", note, guardian)
                 break
             if choice in {"r", "reject"}:
                 note = input("  reason: ").strip()
@@ -89,7 +119,16 @@ def process_auto_approve(snaps: list[firestore.DocumentSnapshot]) -> None:
     for snap in snaps:
         data = snap.to_dict() or {}
         _print_doc(snap.id, data)
-        _record_decision(snap.reference, "approved", "auto-approved (demo mode)")
+        if data.get("disclosure_consent") is False:
+            # The auto-approve "demo mode" still respects the consent gate —
+            # otherwise the dispatcher would refuse and the demo trace would
+            # show a confusing failure on what looks like a happy-path run.
+            _record_decision(snap.reference, "rejected",
+                             "auto-rejected: disclosure_consent=false (demo mode)")
+            continue
+        guardian = True if data.get("is_minor") else None
+        _record_decision(snap.reference, "approved",
+                         "auto-approved (demo mode)", guardian)
 
 
 def main() -> None:

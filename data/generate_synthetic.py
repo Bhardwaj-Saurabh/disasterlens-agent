@@ -27,6 +27,7 @@ Run:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import random
 from datetime import datetime, timedelta, timezone
@@ -41,6 +42,22 @@ OUT_DIR = Path(__file__).resolve().parent / "synthetic"
 EVALS_DIR = Path(__file__).resolve().parents[1] / "evals"
 
 STORM_START = datetime(2026, 5, 26, 14, 0, tzinfo=timezone.utc)
+
+# DiceBear is a deterministic SVG-avatar generator hosted at api.dicebear.com.
+# Each (style, seed) pair always produces the same image — perfect for a
+# reproducible demo. We use the "avataaars" style for adults and "fun-emoji"
+# for minors so the verifier UI can show non-photo-realistic avatars and the
+# demo doesn't accidentally suggest biometric comparison on real faces.
+#
+# Production deployments would replace this with shelter intake photos taken
+# on a tablet at check-in (consent gate already covers them).
+_DICEBEAR_STYLE_ADULT = "avataaars"
+_DICEBEAR_STYLE_MINOR = "fun-emoji"
+
+
+def avatar_url(person_id: str, age: int) -> str:
+    style = _DICEBEAR_STYLE_MINOR if age < 18 else _DICEBEAR_STYLE_ADULT
+    return f"https://api.dicebear.com/9.x/{style}/svg?seed={person_id}"
 
 
 # ── helpers ───────────────────────────────────────────────────────────────
@@ -67,6 +84,117 @@ def write_ndjson(path: Path, docs: list[dict]) -> None:
     print(f"  ✓ wrote {path.relative_to(Path.cwd())}  ({len(docs)} docs)")
 
 
+# ── Dirty-data pass ─────────────────────────────────────────────────────
+# Real shelter rosters are entered by tired volunteers on tablets. Names get
+# misspelt, diacritics get dropped, distinguishing-feature fields get skipped.
+# When --dirty-pct > 0, we corrupt that fraction of roster docs (and a few
+# missing_person_reports) with realistic degradations. The eval scoreboard
+# then reports BOTH the clean and dirty precision numbers — far more credible
+# than a 0.93 on pristine fixtures.
+#
+# Degradations applied per dirty doc (one or two per doc, picked at random):
+#   • single-character substitution in the name (typewriter-adjacent error)
+#   • single-character deletion in the name
+#   • adjacent-letter transposition in the name
+#   • drop distinguishing_features
+#   • drop school_or_employer
+# We do NOT scramble Arabic/Vietnamese script — those characters tend to be
+# pasted, not typed; the realistic failure mode is "wrong romanization", which
+# the variant rules already cover.
+
+def _name_typo(name: str, rng: random.Random) -> str:
+    """Apply one typo to a Latin-script name. No-op if the name is too short
+    or contains non-Latin characters."""
+    if not name or any(ord(c) > 0x024F for c in name):
+        return name  # bail on Arabic, Vietnamese-with-marks, etc.
+    if len(name) < 3:
+        return name
+    op = rng.choice(("sub", "del", "transpose"))
+    if op == "del":
+        i = rng.randrange(len(name))
+        return name[:i] + name[i + 1:]
+    if op == "transpose":
+        i = rng.randrange(len(name) - 1)
+        if name[i] == " " or name[i + 1] == " ":
+            return name  # don't shuffle whitespace
+        return name[:i] + name[i + 1] + name[i] + name[i + 2:]
+    # sub: replace with an adjacent qwerty key
+    adj = {
+        "a": "sq", "b": "vn", "c": "xv", "d": "sf", "e": "wr",
+        "f": "dg", "g": "fh", "h": "gj", "i": "uo", "j": "hk",
+        "k": "jl", "l": "k", "m": "n", "n": "bm", "o": "ip",
+        "p": "o", "q": "wa", "r": "et", "s": "ad", "t": "ry",
+        "u": "yi", "v": "cb", "w": "qe", "x": "zc", "y": "tu",
+        "z": "x",
+    }
+    indices = [i for i, c in enumerate(name) if c.lower() in adj]
+    if not indices:
+        return name
+    i = rng.choice(indices)
+    candidates = adj[name[i].lower()]
+    repl = rng.choice(candidates)
+    if name[i].isupper():
+        repl = repl.upper()
+    return name[:i] + repl + name[i + 1:]
+
+
+def apply_dirty_pass(
+    rosters: list[dict],
+    reports: list[dict],
+    dirty_pct: float,
+    rng: random.Random,
+) -> None:
+    """Mutate `rosters` (and a smaller fraction of `reports`) in place.
+
+    Deterministic given the seeded `rng`. Caller is expected to pass the same
+    rng instance threaded through the rest of generation so consecutive runs
+    with the same seed + dirty_pct are bit-identical.
+    """
+    if dirty_pct <= 0:
+        return
+    n_dirty = int(len(rosters) * dirty_pct)
+    if n_dirty == 0:
+        return
+    dirty_targets = rng.sample(rosters, k=n_dirty)
+    n_typos = n_drops_features = n_drops_school = n_lang_dropped = 0
+    for doc in dirty_targets:
+        ops = rng.sample(
+            ("typo", "drop_features", "drop_school", "drop_language"),
+            k=rng.randint(1, 2),
+        )
+        if "typo" in ops:
+            new_name = _name_typo(doc["name"], rng)
+            if new_name != doc["name"]:
+                doc["name"] = new_name
+                # name_variants was computed off the original — leave it; the
+                # corrupted name is what gets indexed, so the variant set is
+                # stale on this doc. That's realistic too: registrars don't
+                # back-fill variants when they fix a typo upstream.
+                n_typos += 1
+        if "drop_features" in ops and doc.get("distinguishing_features"):
+            doc["distinguishing_features"] = None
+            n_drops_features += 1
+        if "drop_school" in ops and doc.get("school_or_employer"):
+            doc["school_or_employer"] = None
+            n_drops_school += 1
+        if "drop_language" in ops:
+            doc["language_spoken"] = None
+            n_lang_dropped += 1
+
+    # Reports get a lighter pass: 1/3 the rate, name typos only — the
+    # description text carries enough signal that dropped fields don't move
+    # the needle.
+    n_report_dirty = int(len(reports) * dirty_pct / 3)
+    if n_report_dirty:
+        for r in rng.sample(reports, k=n_report_dirty):
+            r["subject_name"] = _name_typo(r["subject_name"], rng)
+
+    print(f"  ⚠  dirty pass: {n_dirty}/{len(rosters)} rosters degraded "
+          f"(typos={n_typos}, dropped distinguishing_features={n_drops_features}, "
+          f"dropped school={n_drops_school}, dropped language={n_lang_dropped}); "
+          f"{n_report_dirty} reports got name typos")
+
+
 # ── shelter rosters + gold-pair seeds ────────────────────────────────────
 
 def build_shelter_rosters(rng: random.Random) -> tuple[list[dict], dict[str, list[dict]]]:
@@ -82,17 +210,25 @@ def build_shelter_rosters(rng: random.Random) -> tuple[list[dict], dict[str, lis
         next_person_seq += 1
         variants_list = sorted({v.surface_form for v in expand(surface_name)})
         roster_id = f"sr_{next_person_seq:04d}"
+        # disclosure_consent: was the resident asked, and did they agree, to be
+        # findable through reunification queries? 70% yes is a deliberately
+        # optimistic but not-universal rate — the agent has to handle the 30%
+        # where the answer is no. Minors (<18) get a separate `is_minor` flag;
+        # the agent and verifier UI treat the two gates independently (a
+        # consenting minor still needs guardian verification before disclosure).
         rosters.append({
             "person_id": roster_id,
             "shelter_id": shelter["shelter_id"],
             "name": surface_name,
             "name_variants": variants_list,
             "age": persona.age,
+            "is_minor": persona.age < 18,
             "language_spoken": persona.language_spoken,
             "arrival_time": random_arrival_time(rng),
             "school_or_employer": persona.school_or_employer,
             "distinguishing_features": persona.distinguishing_features,
-            "contact_consent": rng.random() < 0.7,
+            "disclosure_consent": rng.random() < 0.7,
+            "intake_photo_url": avatar_url(persona.person_id, persona.age),
             "shelter_location": jitter_geo(rng, float(shelter["lat"]), float(shelter["lon"])),
         })
         appearances.setdefault(persona.person_id, []).append({
@@ -443,18 +579,31 @@ def build_gold_pairs(
 # ── orchestrator ─────────────────────────────────────────────────────────
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n", 1)[0])
+    parser.add_argument(
+        "--dirty-pct",
+        type=float,
+        default=0.0,
+        help="Fraction (0.0–1.0) of roster docs to degrade with realistic "
+             "registrar errors (typos, dropped fields). Default 0.0 (clean). "
+             "Use 0.15 for the 'dirty rosters' eval baseline.",
+    )
+    args = parser.parse_args()
+    if not 0.0 <= args.dirty_pct <= 1.0:
+        parser.error("--dirty-pct must be in [0.0, 1.0]")
+
     rng = random.Random(SEED)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     EVALS_DIR.mkdir(parents=True, exist_ok=True)
 
     print("=" * 60)
-    print("DisasterLens synthetic data generation")
+    print("DisasterLens synthetic data generation"
+          + (f"  (dirty-pct={args.dirty_pct})" if args.dirty_pct else ""))
     print("=" * 60)
 
     rosters, appearances = build_shelter_rosters(rng)
     print(f"\n[1/5] shelter_rosters: {len(rosters)} docs from "
           f"{len(STRESS_PERSONAS)} stress + {len(FILLER_PERSONAS)} filler personas")
-    write_ndjson(OUT_DIR / "shelter_rosters.ndjson", rosters)
 
     reports = build_missing_person_reports(rng, appearances)
     print(f"\n[2/5] missing_person_reports: {len(reports)} reports")
@@ -462,6 +611,15 @@ def main() -> None:
     print(f"\n[3/5] reunification_cases: {len(cases)} cases")
     posts = build_social_reports(rng)
     print(f"\n[4/5] social_reports: {len(posts)} posts")
+
+    # Dirty pass — before embeddings so corrupted text gets embedded as-is.
+    # Gold pairs are built AFTER the dirty pass so the expected doc_ids still
+    # point at the (now-degraded) roster rows by their stable person_id; the
+    # name field changed but the linkage didn't, which is exactly what stresses
+    # the agent's variant + fuzzy stack.
+    apply_dirty_pass(rosters, reports, args.dirty_pct, rng)
+
+    write_ndjson(OUT_DIR / "shelter_rosters.ndjson", rosters)
 
     # Embeddings: description for reports, text for social posts
     print(f"\n[5/5] computing embeddings client-side")

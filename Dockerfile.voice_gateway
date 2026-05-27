@@ -1,0 +1,20 @@
+# Twilio voice + SMS gateway. Separate Cloud Run service so its webhook URL
+# stays stable as we redeploy the chat UI. Lazy-imports the agent on first
+# inbound call so cold-start is dominated by Python + FastAPI, not ADK.
+
+FROM python:3.12-slim
+WORKDIR /app
+
+RUN pip install --no-cache-dir uv==0.4.18
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY agent/ ./agent/
+COPY data/ ./data/
+COPY voice_gateway/ ./voice_gateway/
+
+ENV PORT=8080
+EXPOSE 8080
+CMD ["uv", "run", "uvicorn", "voice_gateway.server:app", \
+     "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--timeout-keep-alive", "120"]

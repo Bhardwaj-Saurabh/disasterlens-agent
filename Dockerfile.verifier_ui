@@ -1,0 +1,54 @@
+# Verifier UI + FastAPI proxy — single container that serves the built React
+# app from /verifier_ui/dist AND exposes the /api/* endpoints. The seeker UI
+# at /seeker-app/* lives in the same process so we have ONE Cloud Run service
+# to deploy instead of two.
+#
+# Build:
+#   docker build -f Dockerfile.verifier_ui -t disasterlens-ui .
+# Run locally:
+#   docker run -p 8080:8080 --env-file .env.local disasterlens-ui
+
+# ── Stage 1: build both React apps with Node ────────────────────────────
+FROM node:20-slim AS ui_build
+WORKDIR /app
+
+# Verifier UI
+COPY verifier_ui/package.json verifier_ui/package-lock.json* ./verifier_ui/
+RUN cd verifier_ui && npm ci --silent
+COPY verifier_ui/ ./verifier_ui/
+RUN cd verifier_ui && npm run build
+
+# Seeker UI
+COPY seeker_ui/package.json seeker_ui/package-lock.json* ./seeker_ui/
+RUN cd seeker_ui && npm install --silent
+COPY seeker_ui/ ./seeker_ui/
+RUN cd seeker_ui && npm run build
+
+# ── Stage 2: Python runtime (lean: only what FastAPI needs) ─────────────
+FROM python:3.12-slim AS runtime
+WORKDIR /app
+
+# Install uv (fast resolver) and use it to install only the deps the server
+# actually needs at request time. The agent's heavier deps (google-adk,
+# google-genai) load lazily inside the chat endpoint, so we still include
+# them but with no preheat cost.
+RUN pip install --no-cache-dir uv==0.4.18
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+
+COPY agent/ ./agent/
+COPY data/ ./data/
+COPY verifier_ui/server.py ./verifier_ui/server.py
+# verifier_ui is an implicit namespace package — no __init__.py needed.
+# Built UI assets land where verifier_ui/server.py expects them.
+COPY --from=ui_build /app/verifier_ui/dist ./verifier_ui/dist
+COPY --from=ui_build /app/seeker_ui/dist ./seeker_ui/dist
+
+ENV PORT=8080
+EXPOSE 8080
+# --workers=1 keeps PENDING_RUNS/CALL_LOCALE in-memory state coherent.
+# --timeout-keep-alive=120 lets long agent runs finish without Cloud Run
+# closing the upstream first.
+CMD ["uv", "run", "uvicorn", "verifier_ui.server:app", \
+     "--host", "0.0.0.0", "--port", "8080", \
+     "--workers", "1", "--timeout-keep-alive", "120"]

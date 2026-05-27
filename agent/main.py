@@ -49,10 +49,22 @@ def _print_event(event) -> None:
                 print(f"    ↩  {fr.name} → {summary}")
 
 
-async def run_query(query: str) -> None:
-    print("=" * 70)
-    print(f"SEEKER: {query}")
-    print("=" * 70)
+async def run_query_collect(
+    query: str,
+    *,
+    seeker_photo_url: str = "",
+    user_id: str = "cli",
+    session_id: str | None = None,
+    emit_to_stdout: bool = True,
+) -> dict:
+    """Run one seeker query through the Coordinator and collect the final
+    assistant text + a structured trace of the visible tool calls.
+
+    Library callable: the seeker-UI HTTP endpoint and CLI both wrap this. The
+    `seeker_photo_url`, when set, is prepended to the user message in a
+    machine-parseable header the Coordinator prompt knows how to read.
+    """
+    import uuid
 
     session_service = InMemorySessionService()
     runner = Runner(
@@ -61,19 +73,49 @@ async def run_query(query: str) -> None:
         session_service=session_service,
     )
     session = await session_service.create_session(
-        app_name="disasterlens", user_id="cli", session_id="s1"
+        app_name="disasterlens",
+        user_id=user_id,
+        session_id=session_id or f"s_{uuid.uuid4().hex[:8]}",
     )
-    user_message = types.Content(role="user", parts=[types.Part(text=query)])
+    body = query
+    if seeker_photo_url:
+        body = f"[seeker_photo_url: {seeker_photo_url}]\n\n{query}"
+    user_message = types.Content(role="user", parts=[types.Part(text=body)])
 
-    print("\nAGENT TRACE:")
+    final_text = ""
+    tool_calls: list[dict] = []
+    n_events = 0
     async for event in runner.run_async(
         user_id=session.user_id,
         session_id=session.id,
         new_message=user_message,
     ):
-        _print_event(event)
+        n_events += 1
+        if emit_to_stdout:
+            _print_event(event)
+        if not (event.content and event.content.parts):
+            continue
+        for part in event.content.parts:
+            if part.text:
+                final_text = part.text
+            elif part.function_call:
+                fc = part.function_call
+                tool_calls.append({
+                    "name": fc.name,
+                    "args_preview": {k: str(v)[:80] for k, v in (fc.args or {}).items()},
+                })
+    return {"reply": final_text, "n_events": n_events, "tool_calls": tool_calls}
 
+
+async def run_query(query: str) -> None:
+    """CLI entry — pretty-prints the trace and the final reply."""
+    print("=" * 70)
+    print(f"SEEKER: {query}")
+    print("=" * 70)
+    print("\nAGENT TRACE:")
+    result = await run_query_collect(query, emit_to_stdout=True)
     print("\n" + "=" * 70)
+    print(f"  events={result['n_events']}  tool_calls={len(result['tool_calls'])}")
 
 
 def main() -> None:
