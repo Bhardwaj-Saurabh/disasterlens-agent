@@ -1,0 +1,59 @@
+case_id,query,language,is_hard_negative,expected_count,recall_at_k,precision_at_k,first_hit_rank,reciprocal_rank,top1_name,top1_score,fused_confidence,fused_fired,fused_outcome,latency_ms
+gp_001,Carlos Martínez,es,False,3,1.0,0.6,1,1.0,Martinez Carlos,20.564,1.0,True,TP,406.7
+gp_002,Martinez Carlos,es,False,3,1.0,0.6,1,1.0,Martinez Carlos,19.422,1.0,True,TP,115.1
+gp_003,Carlito Martinez,es,False,3,1.0,0.6,1,1.0,Martinez Carlos,19.422,1.0,True,TP,117.4
+gp_004,محمد خان,ar,False,2,1.0,0.6666666666666666,1,1.0,محمد خان,17.262,1.0,True,TP,116.0
+gp_005,م. خان,ar,False,2,1.0,0.6666666666666666,1,1.0,م. خان,14.228,1.0,True,TP,121.9
+gp_006,Nguyễn Văn Anh,vi,False,3,1.0,0.6,1,1.0,Nguyễn Văn Anh,22.389,1.0,True,TP,113.3
+gp_007,Nguyen Van Anh,vi,False,3,1.0,0.6,1,1.0,Nguyễn Văn Anh,20.713,1.0,True,TP,112.9
+gp_008,Nguyen Van A.,vi,False,3,1.0,0.6,1,1.0,Nguyen Van A.,15.584,1.0,True,TP,112.8
+gp_009,Ramón Hernández,es,False,3,1.0,0.75,1,1.0,Ramon Hernandez,21.578,1.0,True,TP,114.9
+gp_010,Ramon Hernandez,es,False,3,1.0,0.75,1,1.0,Ramon Hernandez,20.139,1.0,True,TP,114.5
+gp_011,Ramon H.,es,False,3,1.0,0.75,1,1.0,Ramon H.,16.601,1.0,True,TP,113.4
+gp_012,Catherine Williams,en,False,2,1.0,0.6666666666666666,1,1.0,Catherine Williams,20.564,1.0,True,TP,113.9
+gp_013,Kate Williams,en,False,2,1.0,0.6666666666666666,1,1.0,Catherine Williams,20.564,1.0,True,TP,115.1
+gp_014,Charles Rodríguez,en,False,3,1.0,0.6,1,1.0,Charles Rodríguez,25.893,1.0,True,TP,114.5
+gp_015,Carlito Rodriguez,en,False,3,1.0,0.6,1,1.0,Charles Rodríguez,24.455,1.0,True,TP,114.3
+gp_016,Chuck Rodriguez,en,False,3,1.0,0.6,1,1.0,Charles Rodríguez,24.455,1.0,True,TP,115.1
+gp_017,أحمد عبد الله,ar,False,2,1.0,1.0,1,1.0,احمد عبد الله,16.522,1.0,True,TP,113.8
+gp_018,احمد عبد الله,ar,False,2,1.0,1.0,1,1.0,احمد عبد الله,15.761,1.0,True,TP,112.8
+gp_019,Manuel Vásquez,en,False,3,1.0,0.6,1,1.0,Manolo Vasquez,19.74,1.0,True,TP,116.3
+gp_020,Manolo Vasquez,en,False,3,1.0,0.6,1,1.0,Manolo Vasquez,18.424,1.0,True,TP,114.4
+gp_021,M. Vasquez,en,False,3,1.0,0.6,1,1.0,M. Vasquez,15.213,1.0,True,TP,113.4
+gp_022,William Foster,en,False,3,1.0,0.6,1,1.0,Will Foster,27.332,1.0,True,TP,114.9
+gp_023,Will Foster,en,False,3,1.0,0.6,1,1.0,Will Foster,27.332,1.0,True,TP,114.6
+gp_024,Bill Foster,en,False,3,1.0,0.6,1,1.0,Will Foster,27.332,1.0,True,TP,114.6
+gp_025,Trần Thị Hồng,vi,False,3,1.0,0.6,1,1.0,Tran Thi Hong,24.128,1.0,True,TP,115.5
+gp_026,Tran Thi Hong,vi,False,3,1.0,0.6,1,1.0,Tran Thi Hong,22.319,1.0,True,TP,114.3
+gp_027,Tran Thi H.,vi,False,3,1.0,0.6,1,1.0,Tran Thi H.,17.601,1.0,True,TP,113.8
+gp_028,María González,es,False,2,1.0,0.4,1,1.0,María González,25.003,1.0,True,TP,115.7
+gp_029,Miryam Gonzalez,es,False,2,1.0,0.4,1,1.0,María González,23.687,1.0,True,TP,116.0
+gp_030,José Ramírez,es,False,3,1.0,0.6,1,1.0,José Ramírez,27.332,1.0,True,TP,114.0
+gp_031,Pepe Ramirez,es,False,3,1.0,0.6,1,1.0,José Ramírez,25.893,1.0,True,TP,117.0
+gp_032,Yousuf Ramirez,es,False,3,1.0,0.6,1,1.0,José Ramírez,25.893,1.0,True,TP,114.7
+gp_033,Wang Wei,zh,False,1,1.0,0.3333333333333333,1,1.0,Wang Wei,13.659,1.0,True,TP,115.0
+gp_034,Mei Lin Wu,zh,False,1,1.0,0.2,1,1.0,Mei Lin Wu,16.475,1.0,True,TP,112.9
+gp_035,Jean-Pierre Dubois,fr,False,1,1.0,0.2,1,1.0,Jean-Pierre Dubois,21.716,1.0,True,TP,116.2
+gp_036,Élise Moreau,fr,False,1,1.0,0.2,1,1.0,Élise Moreau,18.701,1.0,True,TP,114.8
+gp_037,Emily Johnson,en,False,1,1.0,0.25,1,1.0,Emily Johnson,13.659,1.0,True,TP,114.2
+gp_038,Marcus Brown,en,False,1,1.0,0.25,1,1.0,Marcus Brown,14.757,1.0,True,TP,113.0
+gp_039,Sofía Reyes,en,False,1,1.0,1.0,1,1.0,Sofía Reyes,15.987,1.0,True,TP,112.7
+gp_040,Daniel Kim,en,False,1,1.0,0.25,1,1.0,Daniel Kim,15.936,1.0,True,TP,113.0
+gp_041,Priya Patel,en,False,1,1.0,0.5,1,1.0,Priya Patel,15.548,1.0,True,TP,112.8
+gp_042,Lucia Romero,en,False,1,1.0,0.5,1,1.0,Lucia Romero,12.702,1.0,True,TP,113.8
+gp_043,Andrew Davis,en,False,1,1.0,0.2,1,1.0,Andrew Davis,15.548,1.0,True,TP,113.3
+gp_044,Hassan Ali,en,False,1,1.0,0.2,1,1.0,Hassan Ali,17.074,1.0,True,TP,114.2
+gp_045,Linh Pham,en,False,1,1.0,0.25,1,1.0,Linh Pham,14.757,1.0,True,TP,113.1
+gp_046,Robert Wilson,en,False,1,1.0,0.5,1,1.0,Robert Wilson,19.053,1.0,True,TP,114.8
+gp_047,Aisha Williams,en,False,1,1.0,0.2,1,1.0,Aisha Williams,14.819,1.0,True,TP,112.7
+gp_048,Isabella Cruz,en,False,1,1.0,0.2,1,1.0,Isabella Cruz,27.209,1.0,True,TP,117.6
+gp_049,James Thompson,en,False,1,1.0,0.2,1,1.0,James Thompson,27.332,1.0,True,TP,114.5
+gp_050,Mei-Lin Chen,en,False,1,1.0,0.25,1,1.0,Mei-Lin Chen,18.746,1.0,True,TP,114.0
+gp_051,Diego Morales,en,False,1,1.0,0.2,1,1.0,Diego Morales,28.028,1.0,True,TP,113.7
+gp_052,Sarah Goldberg,en,False,1,1.0,1.0,1,1.0,Sarah Goldberg,13.659,1.0,True,TP,112.6
+gp_053,Joaquín Aguilar,es,True,0,,0.0,,0.0,Nguyen Van A.,4.593,0.299,False,TN,112.7
+gp_054,Stephanie Roberts,en,True,0,,0.0,,0.0,Robert Wilson,2.678,0.21,False,TN,114.0
+gp_055,Kenji Tanaka,en,True,0,,0.0,,0.0,Tran Thi Hong,2.73,0.21,False,TN,113.2
+gp_056,Wei Zhang,en,True,0,,0.0,,0.0,Wang Wei,6.83,0.409,False,TN,114.1
+gp_057,Esperanza López,es,True,0,,0.0,,0.0,Esperanza Vargas,9.588,0.49,False,TN,112.8
+gp_058,Yara Mansour,ar,True,0,,0.0,,0.0,M. Vasquez,7.376,0.425,False,TN,113.7

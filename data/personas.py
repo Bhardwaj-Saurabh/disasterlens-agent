@@ -159,7 +159,40 @@ STRESS_PERSONAS: list[Persona] = [
 
 
 # ── FILLER personas: volume + distractors. No stress-case collisions ─────
+# Order matters: the first 20 fillers enter the eval gold set (see
+# generate_synthetic.py). zh/fr personas are placed up front to close PRD §13's
+# "≥ 5 languages with at least one matched case" criterion.
 FILLER_PERSONAS: list[Persona] = [
+    # 5th language: Mandarin Chinese (zh)
+    Persona("f_zh_001", "Wang Wei",            34, "zh",
+            "Houston Chinese Community Center, volunteer",
+            "wears reading glasses, carries a worn leather notebook",
+            description="我在寻找我的丈夫王伟,34岁。他在风暴前在休斯敦华人社区中心做志愿者。"
+                        "他戴着老花镜,随身带着一本旧的皮革笔记本。请帮帮我们。",
+            description_language="zh"),
+    Persona("f_zh_002", "Mei Lin Wu",          11, "zh",
+            "Bellaire Elementary, 5th grade",
+            "Hello Kitty backpack, hair in two braids",
+            description="我女儿吴美琳,11岁,就读Bellaire小学五年级。"
+                        "她背着Hello Kitty书包,扎着两条辫子。",
+            description_language="zh"),
+
+    # 6th language: French (fr)
+    Persona("f_fr_001", "Jean-Pierre Dubois",  58, "fr",
+            "Methodist Hospital, anaesthesiologist",
+            "wedding ring with date engraved 1992, hospital ID",
+            description="Je cherche mon père, Jean-Pierre Dubois, 58 ans. "
+                        "Il est anesthésiste à l'hôpital Methodist. Il porte une "
+                        "alliance gravée 1992 et son badge d'hôpital.",
+            description_language="fr"),
+    Persona("f_fr_002", "Élise Moreau",        22, "fr",
+            "Rice University, French exchange student",
+            "Rice University tote bag, photography camera around neck",
+            description="Je m'appelle Sophie Moreau. Je cherche ma sœur Élise, "
+                        "22 ans, étudiante d'échange à l'université Rice. "
+                        "Elle a un sac Rice University et un appareil photo autour du cou.",
+            description_language="fr"),
+
     Persona("f_001", "Emily Johnson",       28, "en", "Texas Children's Hospital RN",
             "nurse scrubs, badge clipped to pocket"),
     Persona("f_002", "Marcus Brown",        45, "en", "FedEx driver",

@@ -11,6 +11,8 @@ export interface PendingDecision {
   evidence: string;
   seeker_query: string;
   seeker_language: string;
+  seeker_location_text?: string;
+  seeker_location?: { lat: number; lon: number } | null;
   created_at: string;
   decision: string | null;
   verifier_id: string | null;

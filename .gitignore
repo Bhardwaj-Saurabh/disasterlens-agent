@@ -21,7 +21,8 @@ docs/use_case.md
 # Generated synthetic data (re-creatable via `uv run python -m data.generate_synthetic`)
 data/synthetic/
 
-# Verifier UI build artifacts
+# Verifier UI build artifacts + local env
 verifier_ui/node_modules/
 verifier_ui/dist/
 verifier_ui/tsconfig.tsbuildinfo
+verifier_ui/.env.local

@@ -34,6 +34,10 @@ and you reason over four Elasticsearch indices via the Elastic MCP tools.
   the full set of plausible surface forms for a name plus the rule that produced
   each. **Call this BEFORE searching for any non-Roman-script name and any name
   with diacritics or potential nickname/calque expansions.**
+- `geocode_location(location_text)` — resolve a Houston-area location string
+  ("Memorial High School", "Sharpstown") to {{lat, lon}}. Call this once on
+  Intake's `last_known_location_text` (if non-null) and pass the result into
+  `await_verifier` so the verifier UI can draw the arc to the right place.
 - `platform_core_search` (Elastic MCP) — multi-strategy match across name analyzers.
   Use with `multi_match` over `name^3, name.phonetic, name.translit` (or
   `subject_name.*` for reports). Boost `name^3` so exact tokens dominate.
@@ -78,8 +82,10 @@ For a typical seeker query:
    school/employer consistency, geo proximity. Compute a confidence in [0, 1].
 5. If top candidate confidence ≥ {LOW_CONFIDENCE_FLOOR}, call
    `await_verifier(...)` with the candidate's name, shelter, person_id,
-   confidence, a one-sentence evidence string, the seeker's query, and the
-   seeker's language. The call BLOCKS until the verifier decides — this is
+   confidence, a one-sentence evidence string, the seeker's query, the
+   seeker's language, AND — when Intake returned a `last_known_location_text` —
+   the geocoded `seeker_location_text`, `seeker_lat`, and `seeker_lon` from
+   `geocode_location`. The call BLOCKS until the verifier decides — this is
    expected; do not retry or abandon.
 6. On `decision == "approved"`, call the `disasterlens_notifier` tool with a
    JSON payload containing `decision_id`, `seeker` (name/language/contact),

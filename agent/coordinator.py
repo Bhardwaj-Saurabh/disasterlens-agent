@@ -22,6 +22,7 @@ from agent.intake import build_intake_agent
 from agent.notifier import build_notifier_agent
 from agent.prompts import COORDINATOR_PROMPT
 from agent.tools.elastic import build_elastic_mcp_toolset
+from agent.tools.geocode import geocode_location
 from agent.tools.name_variants import name_variants
 from agent.tools.verifier import await_verifier
 
@@ -47,6 +48,7 @@ def build_coordinator_agent() -> LlmAgent:
             notifier_tool,
             build_elastic_mcp_toolset(),
             name_variants,
+            geocode_location,
             await_verifier,
         ],
     )

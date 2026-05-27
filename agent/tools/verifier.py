@@ -51,6 +51,9 @@ async def await_verifier(
     evidence: str,
     seeker_query: str,
     seeker_language: str,
+    seeker_location_text: str = "",
+    seeker_lat: float | None = None,
+    seeker_lon: float | None = None,
 ) -> dict:
     """LONG-RUNNING. Write a pending decision to Firestore and poll for the
     verifier's response.
@@ -68,6 +71,12 @@ async def await_verifier(
             match, school affiliation consistent").
         seeker_query: The seeker's original query text.
         seeker_language: ISO 639-1 code of the seeker's language.
+        seeker_location_text: Human-readable last-known location from Intake
+            (e.g., "Memorial High School", "Sharpstown"). Persisted for the
+            verifier UI's map pin.
+        seeker_lat / seeker_lon: Result of `geocode_location(seeker_location_text)`.
+            Pass both or neither. The UI uses these to place the seeker pin
+            and animate the arc to the candidate's shelter.
 
     Returns:
         A dict with `decision_id`, `decision` ('approved' | 'rejected' |
@@ -76,6 +85,10 @@ async def await_verifier(
     """
     decision_id = f"dec_{uuid4().hex[:12]}"
     doc_ref = _client().collection(PENDING_COLLECTION).document(decision_id)
+
+    seeker_location = None
+    if seeker_lat is not None and seeker_lon is not None:
+        seeker_location = {"lat": float(seeker_lat), "lon": float(seeker_lon)}
 
     doc_ref.set({
         "decision_id": decision_id,
@@ -87,6 +100,8 @@ async def await_verifier(
         "evidence": evidence,
         "seeker_query": seeker_query,
         "seeker_language": seeker_language,
+        "seeker_location_text": seeker_location_text,
+        "seeker_location": seeker_location,
         "created_at": datetime.now(timezone.utc),
         "decision": None,
         "verifier_id": None,
