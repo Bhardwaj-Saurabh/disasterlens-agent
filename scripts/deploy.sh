@@ -104,6 +104,17 @@ deploy_job() {
     --args="run,python,-m,scripts.incident_stream,--period-sec,8" \
     --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},INCIDENT_STREAM_MODE=cloudrun,STREAM_MAX_DOCS=12" \
     --set-secrets="ELASTIC_ENDPOINT=elastic-endpoint:latest,ELASTIC_API_KEY=elastic-api-key:latest"
+
+  echo "▸ deploying standing-query-watcher as a Cloud Run Job (single-shot tick)"
+  gcloud run jobs deploy standing-query-watcher \
+    --image="${UI_IMAGE}" \
+    --region="${REGION}" --project="${GCP_PROJECT_ID}" \
+    --task-timeout=300 --max-retries=0 \
+    --command="uv" \
+    --args="run,python,-m,scripts.standing_query_watcher,--once" \
+    --set-env-vars="GCP_PROJECT_ID=${GCP_PROJECT_ID},WATCHER_MODE=cloudrun" \
+    --set-secrets="ELASTIC_ENDPOINT=elastic-endpoint:latest,ELASTIC_API_KEY=elastic-api-key:latest"
+  echo "  (schedule with: gcloud scheduler jobs create http standing-query-tick --schedule='*/2 * * * *' --uri=<job-execute-url>)"
 }
 
 check() {

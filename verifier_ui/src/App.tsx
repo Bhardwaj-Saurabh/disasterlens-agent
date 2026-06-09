@@ -2,11 +2,15 @@ import { useEffect, useState } from "react";
 import { CandidateCard } from "./components/CandidateCard";
 import { Queue } from "./components/Queue";
 import { ReunificationMap } from "./components/ReunificationMap";
+import { TriageList } from "./components/TriageList";
 import { fetchPending, fetchShelters, type PendingDecision, type Shelter } from "./lib/api";
 
 const POLL_INTERVAL_MS = 1500;
 
+type Tab = "queue" | "triage";
+
 export default function App() {
+  const [tab, setTab] = useState<Tab>("queue");
   const [decisions, setDecisions] = useState<PendingDecision[]>([]);
   const [shelters, setShelters] = useState<Shelter[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -57,23 +61,49 @@ export default function App() {
 
       <main className="app-main">
         <aside className="sidebar">
-          <h2>Queue</h2>
-          <Queue decisions={decisions} selectedId={selectedId} onSelect={setSelectedId} />
+          <div className="tabs">
+            <button
+              className={tab === "queue" ? "tab tab-active" : "tab"}
+              onClick={() => setTab("queue")}
+            >
+              Pending decisions
+            </button>
+            <button
+              className={tab === "triage" ? "tab tab-active" : "tab"}
+              onClick={() => setTab("triage")}
+            >
+              Open cases (triage)
+            </button>
+          </div>
+          {tab === "queue" ? (
+            <Queue decisions={decisions} selectedId={selectedId} onSelect={setSelectedId} />
+          ) : (
+            <TriageList />
+          )}
         </aside>
 
         <section className="center">
-          {selected ? (
+          {tab === "queue" && selected ? (
             <CandidateCard
               decision={selected}
               shelters={shelters}
               onDecided={() => setSelectedId(null)}
             />
-          ) : (
+          ) : tab === "queue" ? (
             <div className="empty-state">
               <h2>No active decision selected</h2>
               <p className="muted">
                 When the agent finds a candidate above the confidence threshold,
                 a decision appears here for human approval.
+              </p>
+            </div>
+          ) : (
+            <div className="empty-state">
+              <h2>Coordinator triage</h2>
+              <p className="muted">
+                Open reunification cases sorted by vulnerability — minor subjects first,
+                then by hours waited and absence of any surfaced candidates. The
+                standing-query watcher re-fires open cases as new roster docs arrive.
               </p>
             </div>
           )}

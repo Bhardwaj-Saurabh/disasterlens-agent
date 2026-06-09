@@ -82,6 +82,8 @@ async def run_query_collect(
         body = f"[seeker_photo_url: {seeker_photo_url}]\n\n{query}"
     user_message = types.Content(role="user", parts=[types.Part(text=body)])
 
+    from agent.telemetry import tracker
+
     final_text = ""
     tool_calls: list[dict] = []
     n_events = 0
@@ -104,6 +106,18 @@ async def run_query_collect(
                     "name": fc.name,
                     "args_preview": {k: str(v)[:80] for k, v in (fc.args or {}).items()},
                 })
+                tracker.record_tool_call(fc.name)
+        # Best-effort: ADK events sometimes carry usage_metadata on the event.
+        # When they do, record it as the Coordinator's own LLM-call cost.
+        usage = getattr(event, "usage_metadata", None) or getattr(event, "usage", None)
+        if usage is not None:
+            tracker.record_llm_call(
+                model=root_agent.model if hasattr(root_agent, "model") else "gemini-2.5-flash",
+                input_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
+                output_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
+                purpose="coordinator",
+            )
+    tracker.record_case_run()
     return {"reply": final_text, "n_events": n_events, "tool_calls": tool_calls}
 
 

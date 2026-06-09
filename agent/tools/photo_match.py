@@ -145,6 +145,9 @@ def photo_match(seeker_photo_url: str, candidate_photo_url: str) -> dict:
             "confidence_delta": 0.0,
         }
 
+    from agent.telemetry import tracker
+    tracker.record_photo_match()
+
     client = genai.Client()
     try:
         resp = client.models.generate_content(
@@ -166,6 +169,16 @@ def photo_match(seeker_photo_url: str, candidate_photo_url: str) -> dict:
                 response_mime_type="application/json",
             ),
         )
+        # Record token usage when the SDK surfaces it (best-effort — the field
+        # name varies across SDK versions). Cost telemetry tolerates missing data.
+        usage = getattr(resp, "usage_metadata", None)
+        if usage:
+            tracker.record_llm_call(
+                model=GEMINI_MODEL,
+                input_tokens=int(getattr(usage, "prompt_token_count", 0) or 0),
+                output_tokens=int(getattr(usage, "candidates_token_count", 0) or 0),
+                purpose="photo_match",
+            )
     except Exception as e:
         return {
             "comparable": False,

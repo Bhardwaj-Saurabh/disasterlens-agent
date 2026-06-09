@@ -154,12 +154,129 @@ def list_shelters() -> list[dict]:
     return SHELTERS
 
 
+# ── Coordinator triage view ─────────────────────────────────────────────
+# "Show me open cases over 24h without matches, sorted by vulnerability."
+# This is the PRD §3 second beat — a coordinator-language view of the queue.
+# Implemented as a single ES query (not ES|QL because triage is read-only
+# and the sort logic is more readable in Python). Vulnerability score is a
+# coarse heuristic: minors first, then by wait time, then by absence of any
+# surfaced candidate matches.
+
+class TriageCase(BaseModel):
+    case_id: str
+    seeker_language: str
+    subject_name_as_given: str
+    subject_age_estimate: int | None
+    is_minor_subject: bool
+    status: str
+    created_at: str | None
+    hours_waiting: float | None
+    n_candidates: int
+    standing_query_active: bool
+    vulnerability_score: int
+
+
+def _vulnerability_score(case: dict) -> int:
+    """Coordinator-facing priority. Higher = needs attention sooner.
+       +50  subject is a minor (under 18)
+       +25  case has no surfaced candidate matches at all
+       +1   per hour waited since creation, capped at +24
+    """
+    score = 0
+    if (case.get("subject_age_estimate") or 99) < 18:
+        score += 50
+    if not (case.get("candidate_matches") or []):
+        score += 25
+    created = case.get("created_at")
+    if created:
+        try:
+            created_dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            hours = (datetime.now(timezone.utc) - created_dt).total_seconds() / 3600
+            score += min(int(hours), 24)
+        except Exception:
+            pass
+    return score
+
+
+def _hours_waiting(created_at: str | None) -> float | None:
+    if not created_at:
+        return None
+    try:
+        dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600, 1)
+    except Exception:
+        return None
+
+
+@app.get("/api/triage")
+def triage(min_hours: float = 0.0) -> list[dict]:
+    """Open reunification cases ranked by coordinator-facing vulnerability.
+    Set min_hours=24 to recover the PRD §3 beat 'over 24h without matches'."""
+    # Lazy import — keeps cold-start lean.
+    from elasticsearch import Elasticsearch
+    from agent.config import ELASTIC_API_KEY, ELASTIC_ENDPOINT, INDEX_REUNIFICATION_CASES
+    es = Elasticsearch(hosts=[ELASTIC_ENDPOINT], api_key=ELASTIC_API_KEY, request_timeout=15)
+    body = {
+        "size": 100,
+        "query": {
+            "bool": {
+                "must_not": [{"terms": {"status": ["verified", "closed_false_match",
+                                                    "closed_no_match"]}}]
+            }
+        },
+    }
+    try:
+        resp = es.search(index=INDEX_REUNIFICATION_CASES, body=body)
+    except Exception as e:
+        raise HTTPException(503, f"elastic query failed: {type(e).__name__}: {e}")
+    rows: list[dict] = []
+    for h in resp.get("hits", {}).get("hits", []):
+        src = h.get("_source") or {}
+        hw = _hours_waiting(src.get("created_at"))
+        if hw is not None and hw < min_hours:
+            continue
+        rows.append({
+            "case_id": src.get("case_id") or h.get("_id"),
+            "seeker_language": src.get("seeker_language", "en"),
+            "subject_name_as_given": src.get("subject_name_as_given", ""),
+            "subject_age_estimate": src.get("subject_age_estimate"),
+            "is_minor_subject": (src.get("subject_age_estimate") or 99) < 18,
+            "status": src.get("status", "unknown"),
+            "created_at": src.get("created_at"),
+            "hours_waiting": hw,
+            "n_candidates": len(src.get("candidate_matches") or []),
+            "standing_query_active": bool(src.get("standing_query_active")),
+            "vulnerability_score": _vulnerability_score(src),
+        })
+    rows.sort(key=lambda r: (-r["vulnerability_score"], r["hours_waiting"] or 0))
+    return rows
+
+
 @app.get("/healthz")
 def healthz() -> dict:
     """Cheap health probe — no Firestore / Elastic dependency. Used by the
     deploy script to measure cold-start latency without skewing it with
     upstream-handshake time."""
     return {"ok": True, "service": "verifier-ui"}
+
+
+# ── Cost telemetry ──────────────────────────────────────────────────────
+@app.get("/api/cost-stats")
+def cost_stats() -> dict:
+    """Per-process cost telemetry. The marginal_cost_per_case_usd value here
+    backs the README's cost claim — it's computed from real Vertex/ES traffic
+    since the process started or the last reset."""
+    from agent.telemetry import tracker
+    return tracker.snapshot()
+
+
+@app.post("/api/cost-stats/reset")
+def cost_stats_reset() -> dict:
+    """Reset the cost counters. Useful before recording the demo video so
+    the on-screen number reflects only the demo run."""
+    from agent.telemetry import tracker
+    tracker.reset()
+    return {"ok": True}
 
 
 # ── Seeker photo upload ─────────────────────────────────────────────────

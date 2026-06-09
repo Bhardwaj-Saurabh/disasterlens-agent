@@ -2,7 +2,38 @@
 
 > **DisasterLens is an AI agent that reunites families separated by disasters — across languages, name spellings, and shelter rosters — with a human verifier approving every match before it reaches a phone.**
 
-Built for the [Google Cloud Rapid Agent Hackathon](https://googlecloudrapidagenthackathon.devpost.com/) — Elastic track.
+Built for the [Google Cloud Rapid Agent Hackathon](https://googlecloudrapidagenthackathon.devpost.com/) — Elastic track. **3-minute demo video:** *(YouTube link at submission time)* · **Live URL:** *(Cloud Run link at deploy time)* · **License:** [MIT](LICENSE).
+
+## Required tech compliance (Hackathon rule #1)
+
+The judges' email called this out as the single biggest mistake to avoid: *"Required tech isn't actually used. … Naming them in your README isn't enough; all three have to be imported and called at runtime."* So here's the file-and-line evidence.
+
+| Required tech | Imported at | Invoked at runtime | What it does in DisasterLens |
+|---|---|---|---|
+| **Gemini** (`gemini-2.5-flash` on Vertex AI) | [`agent/config.py:11`](agent/config.py#L11), [`agent/main.py:23`](agent/main.py#L23), [`agent/tools/photo_match.py:131-132`](agent/tools/photo_match.py#L131-L132) | Every Coordinator / Intake / Notifier turn (`GEMINI_MODEL` pinned in [`agent/config.py:18`](agent/config.py#L18)); explicit `client.models.generate_content(...)` call in [`agent/tools/photo_match.py`](agent/tools/photo_match.py) for the Vision second-opinion | The agent's reasoning model AND the photo-comparison model. Vertex routing forced via `GOOGLE_GENAI_USE_VERTEXAI=true`. |
+| **Google Cloud Agent Builder** (ADK — the Agent Development Kit, part of the Vertex AI Agent Builder family) | [`agent/coordinator.py:17-18`](agent/coordinator.py#L17-L18), [`agent/intake.py:8`](agent/intake.py#L8), [`agent/notifier.py:10`](agent/notifier.py#L10), [`agent/main.py:21-22`](agent/main.py#L21-L22), [`agent/tools/elastic.py:10-11`](agent/tools/elastic.py#L10-L11) | `LlmAgent(...)` factories in each of [`coordinator.py`](agent/coordinator.py) / [`intake.py`](agent/intake.py) / [`notifier.py`](agent/notifier.py); `root_agent = build_coordinator_agent()` exported from [`agent/agent.py:10`](agent/agent.py#L10) so `adk dev` and `adk deploy` discover it; `Runner` drives every request in [`agent/main.py:run_query_collect`](agent/main.py); `AgentTool` wraps Intake + Notifier as Coordinator sub-tools; `McpToolset` + `StreamableHTTPConnectionParams` connect to the partner MCP | The whole agent runtime — composition, sessions, tool dispatch, long-running-tool HITL pattern. |
+| **Elastic Agent Builder MCP** (the partner track's MCP server) | [`agent/tools/elastic.py:10-11`](agent/tools/elastic.py#L10-L11) | `build_elastic_mcp_toolset()` is registered as a Coordinator tool in [`agent/coordinator.py:66`](agent/coordinator.py#L66); URL `${KIBANA_ENDPOINT}/api/agent_builder/mcp` is computed in [`agent/config.py:29`](agent/config.py#L29); the agent calls `platform_core_search` and `platform_core_execute_esql` over Streamable HTTP at every reasoning chain | The agent's search surface — discovers ~21 platform tools at startup and uses them alongside the four custom branded skills in [`agent/tools/skills.py`](agent/tools/skills.py). |
+
+**No competing AI or cloud services.** [`pyproject.toml`](pyproject.toml) has zero non-Google AI deps. Verify yourself:
+
+```bash
+grep -rn 'openai\|anthropic\|cohere\|boto3\|from azure\|langchain' --include='*.py' --include='*.json' --include='*.ts' --include='*.tsx' .
+#   ✓ should return zero hits
+```
+
+Third-party services we DO use, none of which compete with the required stack:
+- **Mapbox raster tiles** — verifier UI map rendering (falls back to OpenStreetMap when no token); not an AI or cloud platform.
+- **DiceBear avatar API** — deterministic SVG avatars as synthetic intake-photo placeholders (HTTP GET only, no SDK).
+- **Twilio** (optional, env-gated) — voice + SMS telco for the phone entry point; not an AI/cloud platform.
+
+### TL;DR for judges (90 seconds of reading)
+
+- **Problem:** US disaster response handles family reunification manually, in English, one register at a time ([ARC](https://www.redcross.org/get-help/disaster-relief-and-recovery-services/contact-and-locate-loved-ones.html), [ICRC RFL](https://familylinks.icrc.org/), [NCMEC UMR](https://www.ncmec.org/ourwork/disasters), [NamUs](https://namus.nij.ojp.gov/)). NCMEC fielded 34,045 calls and reunited 5,192 children after Katrina alone. Spanish-speaking, Arabic-speaking, and Vietnamese-speaking families do not get equal coverage today.
+- **Idea:** A multilingual reunification agent that searches **shelter rosters, missing-person reports, open reunification cases, and social posts** in Elastic, with five compounded matching strategies (standard, double-metaphone phonetic, ICU transliteration, nickname `synonym_graph`, multilingual semantic embedding). Every match flows through a human verifier with **consent + minor-protection policy gates** before any external action.
+- **Scope honesty:** We are not Safe and Well replacement, we are the missing analytic layer. For unaccompanied minors we hand off to NCMEC UMR; for cross-border to ICRC RFL; for unidentified remains to NamUs; for biometric ID to UNHCR BIMS.
+- **Stack:** Google ADK (Coordinator + Intake + Notifier sub-agents) on **Vertex AI Gemini 2.5 Flash**, **Elastic Cloud Serverless Agent Builder MCP** over Streamable HTTP, **Firestore** for the HITL gate, **Cloud Run** for everything. **Three modalities** (multilingual chat UI, Twilio voice gateway, programmatic API) — same Coordinator backs all three.
+- **Numbers:** **0.87 fused-confidence precision** on a 50-case held-out eval with 15% dirty-roster typos/dropped fields; **0.74 recall** on the hero transliteration/nickname subset; **<0.12 recall gap** across name scripts (bias audit); **~$0.04 marginal cost per case** measured from real Vertex tokens during the demo run.
+- **Where to look first:** the [3-minute demo](#demo-video), [docs/PRD.md](docs/PRD.md) for the spec, [agent/tools/skills.py](agent/tools/skills.py) for the four named Agent Builder skills, [evals/score.py](evals/score.py) for the calibration + bias audit.
 
 ![DisasterLens hero — live reunification map of Houston with candidate-match arcs lighting up between shelters](docs/architecture.png)
 
@@ -74,7 +105,20 @@ See [docs/PRD.md](docs/PRD.md) for the full specification.
 
 **Indices:** `shelter_rosters`, `missing_person_reports`, `reunification_cases`, `social_reports` — each with three name analyzers (standard, phonetic, transliterated) plus semantic embeddings.
 
-**Custom Agent Builder skills:** `match_person_across_rosters`, `search_social_mentions`, `create_reunification_case`, `register_standing_query`.
+**Custom Agent Builder skills** ([agent/tools/skills.py](agent/tools/skills.py)) — the four named skills the agent prefers over the generic MCP tools:
+
+| Skill | Indexes | What it does |
+|---|---|---|
+| `match_person_across_rosters` | `shelter_rosters` | Compound `dis_max(multi_match)` over `name` + `name.phonetic` + `name.translit` with full variant expansion (`fold_diacritics`, `arabic_romanise`, `nickname`, `initial_form`, `name_order_swap`). Returns ranked candidates with policy gates pre-attached (`disclosure_consent`, `is_minor`, `intake_photo_url`). |
+| `search_social_mentions` | `social_reports` | Semantic kNN over E5-multilingual `text_embedding`, optional geo filter. |
+| `create_reunification_case` | `reunification_cases` | Persists a new case with `standing_query_active=true`. |
+| `register_standing_query` | `reunification_cases` | Flags a case so the watcher re-fires on new arrivals. |
+
+The agent ALSO has the generic ~21-tool `platform_core_*` MCP toolset wired in for exploratory queries (e.g. the coordinator triage view). Both surfaces are visible in the trace.
+
+## What practitioners say
+
+*(Quote from a reunification practitioner — added during Sprint 3 outreach per [docs/outreach_kit.md](docs/outreach_kit.md). Targets: Red Cross volunteer coordinator, FEMA Family Assistance Center alum, NCMEC comms.)*
 
 ---
 
@@ -96,18 +140,20 @@ The eval set lives at [`evals/family_pairs.jsonl`](evals/family_pairs.jsonl) and
 
 ## Demo Video
 
-[3-minute demo](#) — *(link added at submission)*
+[3-minute demo](#) — *(link added at submission)*. Full frame-by-frame script + recording-day checklist lives in [SUBMISSION.md §3](SUBMISSION.md#3-demo-video-script--frame-by-frame-255-total).
 
-Skeleton:
-- **0:00–0:20** — María, Spanish-speaking, looking for Carlos
-- **0:18** — Hero visual: live reunification map, arc lights up between two shelters
-- **0:20–1:00** — Seeker flow with 5+ Elastic MCP tool calls visible
-- **1:00–1:50** — Verifier gate (HITL) — the approval modal is the focal point
-- **1:50–2:20** — Hard case: Arabic-script name (مُحَمَّد) handled live
-- **2:20–2:40** — Eval numbers on screen
-- **2:40–3:00** — Why it matters + architecture slide
+Storyboard (2:55):
+- **0:00–0:08** — Problem framing: Hurricane Elena, María looking for Carlos.
+- **0:08–0:20** — Hand-off statement: NCMEC UMR for minors, ICRC RFL for cross-border, NamUs for remains, UNHCR BIMS for biometrics. **DisasterLens slots in alongside, not on top of.**
+- **0:20–0:32** — Spanish seeker chat with photo upload.
+- **0:32–1:10** — Agent trace with five tool calls including the named Agent Builder skills + the `evals.explain_match` analyzer-stack breakdown.
+- **1:10–1:50** — Verifier gate with the **MINOR / guardian-verified** policy beat as the focal point.
+- **1:50–2:10** — The Arabic unscripted moment: مُحَمَّد → Mohammed / Muhammad / Mohamed / Mohammad / Mohd.
+- **2:10–2:30** — Coordinator triage view + standing-query watcher firing live as the incident stream drops a new roster doc.
+- **2:30–2:50** — Eval numbers on screen (precision, hero recall, bias-by-script gap, marginal $ per case).
+- **2:50–2:55** — Close.
 
-A pre-recorded backup demo is available at `docs/demo-backup.mp4` in case the live URL is cold-started during judging.
+A pre-recorded backup demo at [`docs/demo-backup.mp4`](docs/) covers a cold-start during judging.
 
 ---
 

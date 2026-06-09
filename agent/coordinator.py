@@ -27,6 +27,12 @@ from agent.tools.geocode import geocode_location
 from agent.tools.name_variants import name_variants
 from agent.tools.pfif_export import pfif_export_case
 from agent.tools.photo_match import photo_match
+from agent.tools.skills import (
+    create_reunification_case,
+    match_person_across_rosters,
+    register_standing_query,
+    search_social_mentions,
+)
 from agent.tools.verifier import await_verifier
 
 
@@ -49,13 +55,24 @@ def build_coordinator_agent() -> LlmAgent:
         tools=[
             intake_tool,
             notifier_tool,
+            # Branded Agent Builder skills — preferred over generic MCP calls
+            # for the documented workflows (PRD §5).
+            match_person_across_rosters,
+            search_social_mentions,
+            create_reunification_case,
+            register_standing_query,
+            # Generic Elastic MCP toolset — for exploratory queries the four
+            # branded skills don't cover (e.g. open-case triage aggregations).
             build_elastic_mcp_toolset(),
+            # Deterministic helpers
             name_variants,
             geocode_location,
             check_existing_case,
             attach_seeker,
             photo_match,
+            # HITL gate
             await_verifier,
+            # Federation
             pfif_export_case,
         ],
     )

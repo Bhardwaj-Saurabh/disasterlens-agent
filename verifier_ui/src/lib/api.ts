@@ -51,6 +51,26 @@ export async function fetchShelters(): Promise<Shelter[]> {
   return r.json();
 }
 
+export interface TriageCase {
+  case_id: string;
+  seeker_language: string;
+  subject_name_as_given: string;
+  subject_age_estimate: number | null;
+  is_minor_subject: boolean;
+  status: string;
+  created_at: string | null;
+  hours_waiting: number | null;
+  n_candidates: number;
+  standing_query_active: boolean;
+  vulnerability_score: number;
+}
+
+export async function fetchTriage(minHours = 0): Promise<TriageCase[]> {
+  const r = await fetch(`/api/triage?min_hours=${minHours}`);
+  if (!r.ok) throw new Error(`triage: ${r.status}`);
+  return r.json();
+}
+
 export async function postDecision(
   decisionId: string,
   decision: DecisionVerdict,

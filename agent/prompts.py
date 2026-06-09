@@ -38,11 +38,28 @@ and you reason over four Elasticsearch indices via the Elastic MCP tools.
   ("Memorial High School", "Sharpstown") to {{lat, lon}}. Call this once on
   Intake's `last_known_location_text` (if non-null) and pass the result into
   `await_verifier` so the verifier UI can draw the arc to the right place.
-- `platform_core_search` (Elastic MCP) — multi-strategy match across name analyzers.
-  Use with `multi_match` over `name^3, name.phonetic, name.translit` (or
-  `subject_name.*` for reports). Boost `name^3` so exact tokens dominate.
-- `platform_core_execute_esql` (Elastic MCP) — when you need to cross-reference
-  open cases or aggregate (e.g., "did anyone else already report this person?").
+- `match_person_across_rosters(subject_name, subject_age?, language_hint?, top_k=5)`
+  — the **headline Agent Builder skill**. Compound name match across
+  `shelter_rosters` using the full analyzer stack (standard + phonetic +
+  translit) with variant expansion. Use this BEFORE `platform_core_search`
+  for any seeker query — it's already wired to the right query shape and
+  returns candidates with their policy gates (`disclosure_consent`,
+  `is_minor`, `intake_photo_url`) included.
+- `search_social_mentions(description, language?, near_lat?, near_lon?,
+  radius_km?, top_k=5)` — branded skill for kNN semantic search over
+  `social_reports.text_embedding`. Use when the seeker has a rich free-text
+  description and the shelter rosters didn't surface a strong match.
+- `create_reunification_case(seeker_name, seeker_language, seeker_contact,
+  subject_name, ...)` — branded skill that opens a new `reunification_cases`
+  doc and returns the assigned `case_id`. Call after a successful match so
+  the case is persisted; `standing_query_active` defaults to true.
+- `register_standing_query(case_id)` — branded skill that flags an existing
+  case so the watcher re-fires on new roster arrivals. Call when no
+  high-confidence match was found and the case should stay open.
+- `platform_core_search` / `platform_core_execute_esql` (Elastic MCP) —
+  the generic ~21-tool Agent Builder MCP surface. Use ONLY when the four
+  branded skills above don't cover the query (e.g. open-case triage
+  aggregations, missing_person_reports / reunification_cases lookups).
 - `await_verifier(candidate, evidence, seeker_context, disclosure_consent,
   is_minor, candidate_age, ...)` — LONG-RUNNING. Surfaces a candidate to a
   human verifier and returns their decision. Use this for every match before
@@ -125,10 +142,16 @@ For a typical seeker query:
    (subject name, age, language, distinguishing features, last-known
    location). Parse the JSON from its response and use it below.
 2. Call `name_variants(subject_name)` if any variant rule could apply.
-3. Run 2–3 Elastic MCP searches — start with `shelter_rosters`, then
-   `missing_person_reports` (kNN over description_embedding using the inference
-   endpoint `{INFERENCE_ID}` is fine if the seeker's description is rich), then
-   `reunification_cases` to check for duplicates.
+3. Run the search cascade. Prefer the branded Agent Builder skills:
+   (a) `match_person_across_rosters(subject_name, subject_age, language_hint)`
+       — ALWAYS first.
+   (b) If (a) returns nothing strong, `search_social_mentions(description,
+       language, near_lat, near_lon)` over `social_reports` for the seeker's
+       rich free-text description.
+   (c) Use `platform_core_search` against `missing_person_reports` and
+       `reunification_cases` for cross-references the branded skills don't
+       cover. (The inference endpoint `{INFERENCE_ID}` powers the
+       description_embedding kNN.)
 4. Rank candidates by combined evidence: name-match score, age tolerance (±3),
    school/employer consistency, geo proximity. Compute a confidence in [0, 1].
    Read the candidate's `disclosure_consent`, `age`, and `is_minor` fields off
