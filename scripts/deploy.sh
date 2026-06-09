@@ -40,32 +40,37 @@ ensure_ar_repo() {
   fi
 }
 
+_build_with_config() {
+  # $1 = Dockerfile path, $2 = full image tag
+  local dockerfile="$1"
+  local image="$2"
+  # `gcloud builds submit --config` wants a real file path, not stdin. We
+  # write the build YAML to a tempfile and clean up after.
+  local cfg
+  cfg=$(mktemp -t disasterlens-cloudbuild.XXXXXX.yaml)
+  cat >"${cfg}" <<EOF
+steps:
+- name: gcr.io/cloud-builders/docker
+  args: ['build', '-f', '${dockerfile}', '-t', '${image}', '.']
+images: ['${image}']
+EOF
+  trap "rm -f '${cfg}'" RETURN
+  gcloud builds submit \
+    --project="${GCP_PROJECT_ID}" \
+    --config="${cfg}" \
+    .
+}
+
 build_ui() {
   ensure_ar_repo
   echo "▸ building ${UI_IMAGE}"
-  gcloud builds submit \
-    --project="${GCP_PROJECT_ID}" \
-    --tag="${UI_IMAGE}" \
-    --config=- <<EOF
-steps:
-- name: gcr.io/cloud-builders/docker
-  args: ['build', '-f', 'Dockerfile.verifier_ui', '-t', '${UI_IMAGE}', '.']
-images: ['${UI_IMAGE}']
-EOF
+  _build_with_config "Dockerfile.verifier_ui" "${UI_IMAGE}"
 }
 
 build_voice() {
   ensure_ar_repo
   echo "▸ building ${VOICE_IMAGE}"
-  gcloud builds submit \
-    --project="${GCP_PROJECT_ID}" \
-    --tag="${VOICE_IMAGE}" \
-    --config=- <<EOF
-steps:
-- name: gcr.io/cloud-builders/docker
-  args: ['build', '-f', 'Dockerfile.voice_gateway', '-t', '${VOICE_IMAGE}', '.']
-images: ['${VOICE_IMAGE}']
-EOF
+  _build_with_config "Dockerfile.voice_gateway" "${VOICE_IMAGE}"
 }
 
 deploy_ui() {

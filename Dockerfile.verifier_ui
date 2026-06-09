@@ -33,12 +33,19 @@ WORKDIR /app
 # google-genai) load lazily inside the chat endpoint, so we still include
 # them but with no preheat cost.
 RUN pip install --no-cache-dir uv==0.4.18
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+# uv sync builds the local project (editable install) as part of resolution,
+# which means Hatchling needs the README and the package source to be present
+# — even at this metadata-only stage. We use --no-install-project to defer
+# the local install until AFTER the source is copied; deps still get pulled
+# in at this layer and stay cached when only application code changes.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY agent/ ./agent/
 COPY data/ ./data/
 COPY verifier_ui/server.py ./verifier_ui/server.py
+# Now install the local project (uses cached deps from the prior layer).
+RUN uv sync --frozen --no-dev
 # verifier_ui is an implicit namespace package — no __init__.py needed.
 # Built UI assets land where verifier_ui/server.py expects them.
 COPY --from=ui_build /app/verifier_ui/dist ./verifier_ui/dist

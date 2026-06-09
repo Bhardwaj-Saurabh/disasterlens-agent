@@ -6,12 +6,16 @@ FROM python:3.12-slim
 WORKDIR /app
 
 RUN pip install --no-cache-dir uv==0.4.18
-COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev
+# See Dockerfile.verifier_ui for why we split the sync into two stages —
+# Hatchling needs README + source to build the local package, but we want
+# the dependency-resolution layer to cache on its own.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --frozen --no-dev --no-install-project
 
 COPY agent/ ./agent/
 COPY data/ ./data/
 COPY voice_gateway/ ./voice_gateway/
+RUN uv sync --frozen --no-dev
 
 ENV PORT=8080
 EXPOSE 8080
