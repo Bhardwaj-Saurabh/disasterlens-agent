@@ -96,16 +96,149 @@ The verifier UI ([verifier_ui/](verifier_ui/)) sits behind all three and is wher
 
 ## Architecture
 
-See [docs/PRD.md](docs/PRD.md) for the full specification.
+See [docs/PRD.md](docs/PRD.md) for the full product spec and [docs/design.md](docs/design.md) for the design rationale.
 
-**Stack:**
-- **Agent:** Google ADK (Python) + Gemini 2.x on Vertex AI
-- **Search:** Elasticsearch 9.x Serverless via Agent Builder MCP
-- **Embeddings:** E5-multilingual / Jina v3 via Elastic inference endpoints (not ELSER — ELSER v2 is English-only)
-- **Verifier UI:** React + Vite + MapLibre GL JS (renders Mapbox raster tiles via the Styles API when a token is set; falls back to OpenStreetMap otherwise)
-- **Hosting:** Google Cloud Run
+### Runtime topology
 
-**Indices:** `shelter_rosters`, `missing_person_reports`, `reunification_cases`, `social_reports` — each with three name analyzers (standard, phonetic, transliterated) plus semantic embeddings.
+```mermaid
+flowchart LR
+    classDef ext fill:#fef3c7,stroke:#b45309,color:#1f2937
+    classDef agent fill:#dcfce7,stroke:#15803d,color:#1f2937
+    classDef ui fill:#dbeafe,stroke:#1d4ed8,color:#1f2937
+    classDef data fill:#f3e8ff,stroke:#7e22ce,color:#1f2937
+    classDef telco fill:#fee2e2,stroke:#b91c1c,color:#1f2937
+
+    Seeker["Seeker<br/>(web chat — seeker_ui)"]
+    Phone["Seeker<br/>(phone — Twilio inbound)"]
+    Verifier["Verifier<br/>(browser — verifier_ui)"]
+    Elastic["Elastic Cloud Serverless<br/>(4 indices)"]
+
+    AgentApp["<b>verifier-ui</b> Cloud Run<br/>FastAPI + ADK runtime<br/>(Coordinator + Intake + Notifier)"]
+    Voice["<b>voice-gateway</b> Cloud Run<br/>FastAPI + TwiML"]
+    Watcher["<b>standing-query-watcher</b><br/>Cloud Run Job"]
+    Stream["<b>incident-stream</b><br/>Cloud Run Job"]
+
+    Firestore[("Firestore<br/>pending_decisions<br/>dispatched_notifications")]
+    Secrets[("Secret Manager<br/>elastic + twilio keys")]
+    Vertex["Vertex AI<br/>Gemini 2.5 Flash"]
+    TwilioAPI["Twilio<br/>Voice + SMS"]
+    MCP["Elastic Agent Builder MCP<br/>(Streamable HTTP on .kb. host)"]
+
+    Seeker -->|HTTPS POST /api/seeker-chat| AgentApp
+    Phone -->|inbound call| TwilioAPI
+    TwilioAPI -->|webhook POST /voice/incoming| Voice
+    Voice -->|in-process call| AgentApp
+    Verifier -->|HTTPS /api/pending /api/triage| AgentApp
+    AgentApp <-->|read/write| Firestore
+    AgentApp -->|MCP tools| MCP
+    MCP -->|search / esql| Elastic
+    AgentApp -->|reasoning + vision| Vertex
+    Stream -->|drip new docs| Elastic
+    Watcher -->|re-fire open cases| Elastic
+    Watcher -->|write decisions| Firestore
+    AgentApp -.->|fetch keys| Secrets
+    Voice -.->|fetch keys| Secrets
+    AgentApp -->|dispatch SMS| TwilioAPI
+
+    class Seeker,Phone,Verifier,Elastic,TwilioAPI,MCP ext
+    class AgentApp,Voice,Watcher,Stream agent
+    class Firestore,Secrets,Vertex data
+```
+
+Two Cloud Run services (`verifier-ui` and `voice-gateway`, both `--min-instances=1`), two Cloud Run Jobs (`incident-stream` and `standing-query-watcher`). One Coordinator agent backs all three entry-point modalities (chat, voice, programmatic API).
+
+### Agent composition
+
+**One ADK app, three agents, ten tools.** Sub-agents are wrapped as `AgentTool` (callable, returns control) rather than `sub_agents=[...]` (one-way transfer) so the Coordinator stays in charge of the reasoning loop.
+
+```
+Coordinator (LlmAgent — root, on Gemini 2.5 Flash via Vertex AI)
+│
+├── sub_agents (wrapped as AgentTool):
+│   ├── Intake     — multilingual structured-case extraction (no tools, pure LLM)
+│   └── Notifier   — drafts + dispatches multilingual notifications
+│                    (owns dispatch_notification → Twilio SMS or mock)
+│
+└── tools:
+    ├── match_person_across_rosters  ┐
+    ├── search_social_mentions       │  4 BRANDED Agent Builder skills
+    ├── create_reunification_case    │  (deterministic Python; show by name in trace)
+    ├── register_standing_query      ┘
+    │
+    ├── elastic_mcp                  — MCPToolset over Streamable HTTP to
+    │                                  ${KIBANA_ENDPOINT}/api/agent_builder/mcp
+    │                                  (~21 platform_core_* tools at runtime)
+    │
+    ├── name_variants                — ICU translit + double-metaphone + nickname
+    │                                  graph expansion (rule-based, no LLM)
+    ├── geocode_location             — deterministic Houston lookup table
+    ├── check_existing_case          — seeker-side dedup against open cases
+    ├── attach_seeker                — register additional seeker on existing case
+    ├── photo_match                  — Gemini Vision second-opinion (capped ±0.15)
+    │
+    ├── await_verifier               — LONG-RUNNING FunctionTool (HITL gate)
+    │                                  writes pending_decisions/{id} to Firestore,
+    │                                  polls until decision field appears
+    │
+    └── pfif_export_case             — emit PFIF 1.4 XML for federation
+                                       (NCMEC UMR / ICRC RFL / Person Finder)
+```
+
+### Golden-path data flow (the demo trace)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Seeker (Spanish chat or phone call)
+    participant C as Coordinator
+    participant I as Intake
+    participant SK as Branded Skill<br/>match_person_across_rosters
+    participant E as Elastic MCP
+    participant FS as Firestore
+    participant V as Verifier UI
+    participant N as Notifier
+
+    S->>C: "Busco a mi nieto Carlos Martínez, 15 años..."
+    C->>I: extract structured case (ES)
+    I-->>C: {subject_name, age=15, school, language=es}
+
+    Note over C,E: 4-6 visible tool calls — branded + MCP
+    C->>C: name_variants("Carlos Martínez") → 7 variants
+    C->>C: geocode_location("Memorial High School")
+    C->>SK: subject + variants + age
+    SK->>E: dis_max(multi_match over name/phonetic/translit)
+    E-->>SK: ranked candidates w/ policy gates
+    SK-->>C: candidates incl. is_minor=true
+
+    C->>C: check_existing_case → no open case found
+    C->>V: await_verifier(candidate, is_minor=true)
+    V->>FS: write pending_decisions/{id}<br/>(policy fields: disclosure_consent, is_minor)
+    Note over V: human reviews — MINOR badge,<br/>guardian-verification checkbox blocks Approve
+    V->>FS: write decision=approved, guardian_verified=true
+    FS-->>C: decision payload (after polling)
+
+    C->>N: notify(decision_id, seeker, matched_person)
+    N->>N: draft Spanish-language SMS (usted-form)
+    N->>FS: dispatched_notifications/{id} (+ Twilio API)
+    N-->>C: dispatched
+    C-->>S: "El verificador ha confirmado que Carlos está en..."
+```
+
+Tool-call budget for the demo trace: **1 Intake handoff + 1 name_variants + 1 geocode + 1 branded skill (which itself hits Elastic MCP) + 1 check_existing_case + 1 await_verifier + 1 Notifier handoff + 1 dispatch_notification = 8 visible boxes**, hitting the PRD's 5–8-tool-calls-per-chain target.
+
+### Stack
+
+- **Agent:** Google ADK (Python) — part of the Vertex AI Agent Builder family. `LlmAgent` + `AgentTool` + `Runner` + `McpToolset`.
+- **LLM:** Gemini 2.5 Flash on Vertex AI (routing forced via `GOOGLE_GENAI_USE_VERTEXAI=true`).
+- **Search:** Elastic Cloud Serverless via Agent Builder MCP over Streamable HTTP.
+- **Embeddings:** `.multilingual-e5-small` (384-d) via the `disasterlens_e5` Elastic inference endpoint — not ELSER (ELSER v2 is English-only).
+- **HITL state:** Firestore `pending_decisions` collection. The `await_verifier` long-running tool writes the doc and polls until the verifier UI sets the `decision` field.
+- **Verifier UI:** React 18 + Vite 5 + MapLibre GL JS (renders Mapbox raster tiles when a token is set, falls back to OpenStreetMap otherwise).
+- **Seeker UI:** React 18 + Vite 5, six locales with auto-RTL.
+- **Voice gateway:** FastAPI + Twilio Voice + Polly TTS. DTMF language picker → speech-to-text → spoken reply via TwiML `<Say>`. Outbound SMS via Twilio Messaging API (env-gated; falls back to mock-banner when creds absent).
+- **Hosting:** Cloud Run (2 services + 2 Jobs).
+
+**Indices:** `shelter_rosters`, `missing_person_reports`, `reunification_cases`, `social_reports` — each with three name analyzers (standard, phonetic via double-metaphone, transliterated via ICU + nickname `synonym_graph`) plus semantic embeddings.
 
 **Custom Agent Builder skills** ([agent/tools/skills.py](agent/tools/skills.py)) — the four named skills the agent prefers over the generic MCP tools:
 
