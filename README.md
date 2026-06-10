@@ -2,6 +2,8 @@
 
 > **DisasterLens is an AI agent that reunites families separated by disasters — across languages, name spellings, and shelter rosters — with a human verifier approving every match before it reaches a phone.**
 
+![](static/lens.png)
+
 Built for the [Google Cloud Rapid Agent Hackathon](https://googlecloudrapidagenthackathon.devpost.com/) — Elastic track. **3-minute demo video:** *(YouTube link at submission time)* · **Live URL:** *(Cloud Run link at deploy time)* · **License:** [MIT](LICENSE).
 
 ## Required tech compliance (Hackathon rule #1)
